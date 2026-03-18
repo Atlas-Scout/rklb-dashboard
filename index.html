@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<!--
+   ______                            __
+  / ____/___  ____ ___  ____  __  __/ /____  _____
+ / /   / __ \/ __ `__ \/ __ \/ / / / __/ _ \/ ___/
+/ /___/ /_/ / / / / / / /_/ / /_/ / /_/  __/ /
+\____/\____/_/ /_/ /_/ .___/\__,_/\__/\___/_/
+                    /_/
+        Created with Perplexity Computer
+        https://www.perplexity.ai/computer
+-->
+
+<!-- Perplexity Computer Attribution — SEO Meta Tags -->
+<meta name="generator" content="Perplexity Computer">
+<meta name="author" content="Perplexity Computer">
+<meta property="og:see_also" content="https://www.perplexity.ai/computer">
+<link rel="author" href="https://www.perplexity.ai/computer">
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>RKLB — Rocket Lab Financial Model</title>
+<meta name="description" content="Interactive DCF financial model dashboard for Rocket Lab USA, Inc. (RKLB) with segment-level revenue buildup">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="style.css">
+<style>
+/* ========== REVENUE TAB CUSTOM STYLES ========== */
+.rev-tab-hero { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.rev-tab-card { flex: 1; min-width: 140px; background: var(--color-surface); border-radius: 10px; padding: 12px 14px; }
+.rev-tab-card-label { font-size: 11px; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+.rev-tab-card-value { font-size: 22px; font-weight: 700; color: var(--color-text); margin-top: 2px; }
+.rev-tab-card-sub { font-size: 11px; color: var(--color-muted); margin-top: 2px; }
+
+.rev-segment-legend { display: flex; gap: 16px; margin-bottom: 10px; flex-wrap: wrap; }
+.rev-legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--color-text-secondary); }
+.rev-legend-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+.rev-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.rev-table { width: 100%; border-collapse: collapse; font-size: 12px; table-layout: auto; }
+.rev-table th, .rev-table td { padding: 6px 10px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--color-border); }
+.rev-table th:first-child, .rev-table td:first-child { text-align: left; position: sticky; left: 0; z-index: 2; background: var(--color-bg); min-width: 130px; }
+.rev-table th { font-weight: 600; font-size: 11px; color: var(--color-muted); text-transform: uppercase; letter-spacing: 0.3px; }
+.rev-table .rev-row-header { font-weight: 600; color: var(--color-text); }
+.rev-table .rev-row-sub { color: var(--color-text-secondary); padding-left: 20px; font-size: 11px; }
+.rev-table .rev-row-total { font-weight: 700; color: var(--color-text); border-top: 2px solid var(--color-border); }
+.rev-table .rev-row-growth { font-size: 11px; color: var(--color-muted); font-style: italic; }
+.rev-table .rev-actual-col { background: rgba(32, 128, 141, 0.06); }
+.rev-table .rev-pct-mix { font-size: 10px; color: var(--color-muted); }
+
+.rev-bar-chart { display: flex; align-items: flex-end; gap: 4px; height: 140px; margin: 16px 0; padding: 0 4px; }
+.rev-bar-group { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.rev-bar-stack { width: 100%; display: flex; flex-direction: column-reverse; border-radius: 3px 3px 0 0; overflow: hidden; }
+.rev-bar-segment { width: 100%; transition: height 0.3s ease; }
+.rev-bar-label { font-size: 9px; color: var(--color-muted); text-align: center; }
+.rev-bar-value { font-size: 9px; font-weight: 600; color: var(--color-text-secondary); text-align: center; margin-top: 2px; }
+
+.rev-assumptions-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+@media (max-width: 600px) { .rev-assumptions-grid { grid-template-columns: 1fr; } }
+.rev-assumption-card { background: var(--color-surface); border-radius: 8px; padding: 10px 12px; }
+.rev-assumption-title { font-size: 11px; font-weight: 600; color: var(--color-primary); text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 6px; }
+.rev-assumption-item { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; border-bottom: 1px solid var(--color-border); }
+.rev-assumption-item:last-child { border-bottom: none; }
+.rev-assumption-key { color: var(--color-text-secondary); }
+.rev-assumption-val { font-weight: 600; color: var(--color-text); }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="app-header">
+  <div class="header-inner">
+    <div class="header-left">
+      <svg class="logo" viewBox="0 0 32 32" width="28" height="28" fill="none" aria-label="RKLB Logo">
+        <rect x="2" y="2" width="28" height="28" rx="6" stroke="currentColor" stroke-width="2"/>
+        <path d="M10 22V10h5c2.5 0 4 1.5 4 3.5 0 1.8-1 3-2.8 3.4L20 22h-3l-3.5-5H13v5h-3z" fill="currentColor" opacity="0.9"/>
+      </svg>
+      <div class="header-title">
+        <span class="ticker" id="headerTicker">RKLB</span>
+        <span class="company-name" id="headerCompany">Rocket Lab</span>
+      </div>
+    </div>
+    <div class="header-right">
+      <span class="price-badge" id="headerPrice">$69.48</span>
+      <button class="theme-toggle" data-theme-toggle aria-label="Switch to light mode">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+      </button>
+    </div>
+  </div>
+</header>
+
+<!-- SCENARIO BAR -->
+<div class="scenario-bar" id="scenarioBar"></div>
+
+<!-- TAB NAVIGATION -->
+<nav class="tab-nav" role="tablist">
+  <button class="tab-btn active" role="tab" aria-selected="true" data-tab="financial">Financial Model</button>
+  <button class="tab-btn" role="tab" aria-selected="false" data-tab="revenue">Revenue</button>
+  <button class="tab-btn" role="tab" aria-selected="false" data-tab="dcf">DCF Valuation</button>
+  <button class="tab-btn" role="tab" aria-selected="false" data-tab="pe">PE Valuation</button>
+  <button class="tab-btn" role="tab" aria-selected="false" data-tab="multiples">Multiples</button>
+  <button class="tab-btn" role="tab" aria-selected="false" data-tab="summary">Summary</button>
+  <button class="tab-btn tab-btn-icon" role="tab" aria-selected="false" data-tab="settings" aria-label="Settings"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
+</nav>
+
+<!-- =================== FINANCIAL MODEL TAB =================== -->
+<main class="main-content">
+<div class="tab-panel active" id="panel-financial" role="tabpanel">
+
+  <!-- PRICE vs DCF HERO -->
+  <section class="valuation-hero" aria-label="Key valuation">
+    <div class="val-card">
+      <span class="val-label">Current Price</span>
+      <span class="val-price" id="heroCurrentPrice">$69.48</span>
+    </div>
+    <div class="val-divider">
+      <span class="val-arrow" id="heroArrow">&rarr;</span>
+    </div>
+    <div class="val-card val-card-dcf">
+      <span class="val-label" id="heroTargetLabel">Blended Target</span>
+      <span class="val-price val-price-dcf" id="heroDCFPrice">&mdash;</span>
+      <span class="val-upside" id="heroUpside">&mdash;</span>
+      <span class="val-sub" id="heroBlendedSub"></span>
+    </div>
+  </section>
+
+  <!-- SCENARIO TAGS -->
+  <div class="scenario-tags-row" id="scenarioTags"></div>
+
+  <!-- INCOME STATEMENT TABLE -->
+  <section class="collapsible-section">
+    <button class="section-header" aria-expanded="true" data-collapse="incomeStmt">
+      <span class="section-title">Income Statement &amp; FCF</span>
+      <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="section-body" id="incomeStmt">
+      <p class="edit-hint">Tap highlighted cells to edit assumptions</p>
+      <div class="table-wrapper">
+        <table class="fin-table" id="incomeTable">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- CATALYSTS -->
+  <section class="collapsible-section">
+    <button class="section-header" aria-expanded="false" data-collapse="catalysts">
+      <span class="section-title">Catalysts</span>
+      <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="section-body collapsed" id="catalysts">
+      <ul class="catalyst-list">
+        <li><strong>Neutron First Flight</strong> (Q4 2026) &mdash; "Neutron's first launch is now targeted for Q4 2026." Stage 1 tank on AFP machine. Thrust structure, Hungry Hippo fairing, interstage all qualified. Archimedes engines in extensive testing.</li>
+        <li><strong>SDA Tranche 3 Revenue Ramp</strong> (2026-2029) &mdash; "$816M contract for 18 spacecraft. Largest single contract in Rocket Lab's history." ~10% rev rec in first 12 months, 40%/40%/10% bell curve.</li>
+        <li><strong>Golden Dome Participation</strong> (2026+) &mdash; "Multiple fronts: launch, satellites, optical terminals, optical payloads." Selected by MDA for Shield ($151B ceiling). HASTE testing supports program.</li>
+        <li><strong>Mynaric Acquisition</strong> (Pending) &mdash; German regulatory review ongoing. Adds optical terminal manufacturing for vertical integration.</li>
+        <li><strong>Mars Telecom Network</strong> (2027+) &mdash; NASA RFP for Mars telecommunications network (~$700-750M). "More hardware on and orbiting Mars than just about any other company."</li>
+        <li><strong>Space Data Centers</strong> (Long-term) &mdash; Space-optimized silicon solar arrays for gigawatt-class power at kilometer scale. Non-traditional customers exploring.</li>
+        <li><strong>HASTE/Hypersonics Growth</strong> (2026) &mdash; Only credible provider for rapid hypersonic testing. Critical for Golden Dome. Growing pipeline.</li>
+        <li><strong>Electron 20%+ Growth</strong> (2026) &mdash; "Nominally 20% growth" excl Neutron. Build rate now every 11-13 days. 30+ new missions booked in FY25.</li>
+      </ul>
+    </div>
+  </section>
+
+</div>
+
+<!-- =================== REVENUE TAB =================== -->
+<div class="tab-panel" id="panel-revenue" role="tabpanel">
+
+  <!-- Revenue Hero Cards -->
+  <div class="rev-tab-hero" id="revHeroCards">
+    <div class="rev-tab-card">
+      <div class="rev-tab-card-label">FY25A Revenue</div>
+      <div class="rev-tab-card-value">$602M</div>
+      <div class="rev-tab-card-sub">+38% YoY</div>
+    </div>
+    <div class="rev-tab-card">
+      <div class="rev-tab-card-label">FY25A Launches</div>
+      <div class="rev-tab-card-value">21</div>
+      <div class="rev-tab-card-sub">Electron + HASTE</div>
+    </div>
+    <div class="rev-tab-card">
+      <div class="rev-tab-card-label">Backlog</div>
+      <div class="rev-tab-card-value">$1.85B</div>
+      <div class="rev-tab-card-sub">+73% YoY</div>
+    </div>
+    <div class="rev-tab-card">
+      <div class="rev-tab-card-label">Backlog Mix</div>
+      <div class="rev-tab-card-value">74/26</div>
+      <div class="rev-tab-card-sub">Space Sys / Launch</div>
+    </div>
+  </div>
+
+  <!-- Revenue Buildup Table -->
+  <section class="collapsible-section">
+    <button class="section-header" aria-expanded="true" data-collapse="revBuildup">
+      <span class="section-title">Revenue Buildup by Segment</span>
+      <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="section-body" id="revBuildup">
+      <div class="rev-segment-legend">
+        <div class="rev-legend-item"><span class="rev-legend-dot" style="background:#20808D"></span> Electron/HASTE</div>
+        <div class="rev-legend-item"><span class="rev-legend-dot" style="background:#22c55e"></span> Neutron</div>
+        <div class="rev-legend-item"><span class="rev-legend-dot" style="background:#f59e0b"></span> Space Systems</div>
+      </div>
+      <div class="rev-bar-chart" id="revBarChart"></div>
+      <div class="rev-table-wrap">
+        <table class="rev-table" id="revBuildupTable">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Revenue Assumptions -->
+  <section class="collapsible-section">
+    <button class="section-header" aria-expanded="true" data-collapse="revAssumptions">
+      <span class="section-title">Key Revenue Assumptions</span>
+      <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="section-body" id="revAssumptions">
+      <div class="rev-assumptions-grid" id="revAssumptionsGrid"></div>
+    </div>
+  </section>
+
+  <!-- Historical Segment Data -->
+  <section class="collapsible-section">
+    <button class="section-header" aria-expanded="false" data-collapse="revHistorical">
+      <span class="section-title">Historical Segment Performance</span>
+      <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="section-body collapsed" id="revHistorical">
+      <div class="rev-table-wrap">
+        <table class="rev-table" id="revHistoricalTable">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- =================== DCF VALUATION TAB =================== -->
+<div class="tab-panel" id="panel-dcf" role="tabpanel">
+
+  <!-- DCF KPIs -->
+  <section class="kpi-grid" aria-label="DCF metrics">
+    <div class="kpi-card kpi-highlight">
+      <span class="kpi-label">DCF Implied</span>
+      <span class="kpi-value" id="kpiDCFPrice">&mdash;</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">Current Price</span>
+      <span class="kpi-value" id="kpiCurrentPrice">$69.48</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">Upside</span>
+      <span class="kpi-value" id="kpiUpside">&mdash;</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">EV / FY26 Rev</span>
+      <span class="kpi-value" id="kpiEVRev">&mdash;</span>
+    </div>
+  </section>
+
+  <!-- BUSINESS ATTRIBUTES -->
+  <section class="collapsible-section">
+    <button class="section-header" aria-expanded="true" data-collapse="bizAttributes">
+      <span class="section-title">Business Attributes</span>
+      <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="section-body" id="bizAttributes">
+      <div class="biz-attr-grid">
+        <div class="biz-attr-item">
+          <span class="biz-attr-label">Pricing power in core market?</span>
+          <label class="switch-label">
+            <input type="checkbox" id="pricingPowerToggle" class="switch-input">
+            <span class="switch-slider"></span>
+            <span class="switch-text" id="pricingPowerText">No</span>
+          </label>
+          <span class="biz-attr-note">Rocket Lab is the only proven small launch provider globally. No successful new US/EU small launch vehicle in 2025. If enabled, applies 15% monopoly premium to terminal valuation yield.</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- DCF ASSUMPTIONS -->
+  <section class="collapsible-section">
+    <button class="section-header" aria-expanded="true" data-collapse="dcfInputs">
+      <span class="section-title">Valuation Assumptions</span>
+      <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="section-body" id="dcfInputs">
+      <div class="table-wrapper">
+        <table class="assumptions-table" id="dcfAssumptionsTable">
+          <thead>
+            <tr>
+              <th class="at-driver">Driver</th>
+              <th class="at-val">Value</th>
+              <th class="at-btns"></th>
+              <th class="at-commentary">Commentary</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="at-driver">Discount Rate</td>
+              <td class="at-val"><span class="assumption-value" id="valDiscountRate">12%</span></td>
+              <td class="at-btns">
+                <button class="toggle-btn down" data-key="discountRate" data-dir="-1" aria-label="Decrease"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/></svg></button>
+                <button class="toggle-btn up" data-key="discountRate" data-dir="1" aria-label="Increase"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg></button>
+              </td>
+              <td class="at-commentary">Pre-revenue Neutron, heavy CapEx, $39B mkt cap. Higher risk premium for pre-profit growth company.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- DCF OUTPUT -->
+  <section class="collapsible-section">
+    <button class="section-header" aria-expanded="true" data-collapse="dcfOutput">
+      <span class="section-title">DCF Output</span>
+      <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="section-body" id="dcfOutput">
+      <div class="dcf-summary" id="dcfSummary"></div>
+
+      <h4 class="sub-title">Projected FCF Schedule</h4>
+      <div class="table-wrapper">
+        <table class="fin-table" id="fcfTable">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- =================== MULTIPLES TAB =================== -->
+<div class="tab-panel" id="panel-multiples" role="tabpanel">
+
+  <!-- MULTIPLES KPIs -->
+  <section class="kpi-grid" aria-label="Valuation multiples">
+    <div class="kpi-card">
+      <span class="kpi-label">FY26E P/E</span>
+      <span class="kpi-value" id="kpiPE">&mdash;</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">FY26E EV/Sales</span>
+      <span class="kpi-value" id="kpiEVSales">&mdash;</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">FY26E FCF Yield</span>
+      <span class="kpi-value" id="kpiFCFYield">&mdash;</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">FY26E Adj FCF Yield</span>
+      <span class="kpi-value" id="kpiAdjFCFYield">&mdash;</span>
+    </div>
+  </section>
+
+  <!-- MULTIPLES OVER TIME TABLE -->
+  <section class="collapsible-section">
+    <button class="section-header" aria-expanded="true" data-collapse="multiplesBody">
+      <span class="section-title">Valuation Multiples Over Time</span>
+      <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="section-body" id="multiplesBody">
+      <p class="multiples-note" id="multiplesNote">Based on current share price of $69.48 held constant across all years. Multiples decline as earnings and FCF grow into the valuation.</p>
+      <div class="table-wrapper">
+        <table class="fin-table" id="multiplesTable">
+          <thead></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+</div>
+
+<!-- =================== PE VALUATION TAB =================== -->
+<div class="tab-panel" id="panel-pe" role="tabpanel">
+
+  <!-- PE KPIs -->
+  <section class="kpi-grid" aria-label="PE valuation metrics">
+    <div class="kpi-card kpi-highlight">
+      <span class="kpi-label">P/E Implied</span>
+      <span class="kpi-value" id="kpiPEPrice">&mdash;</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">Convergence Year</span>
+      <span class="kpi-value" id="kpiPEYear">&mdash;</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label">P/E Upside</span>
+      <span class="kpi-value" id="kpiPEUpside">&mdash;</span>
+    </div>
+    <div class="kpi-card">
+      <span class="kpi-label" id="kpiBlendedLabel">Blended Target</span>
+      <span class="kpi-value" id="kpiBlendedPrice">&mdash;</span>
+    </div>
+  </section>
+
+  <!-- PE VALUATION OUTPUT -->
+  <section class="collapsible-section">
+    <button class="section-header" aria-expanded="true" data-collapse="peOutput">
+      <span class="section-title">P/E Valuation</span>
+      <svg class="chevron" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+    </button>
+    <div class="section-body" id="peOutput">
+      <div class="dcf-summary" id="peSummary"></div>
+    </div>
+  </section>
+
+</div>
+
+<!-- =================== SUMMARY TAB =================== -->
+<div class="tab-panel" id="panel-summary" role="tabpanel">
+  <div class="summary-page" id="summaryPage">
+    <!-- Rendered by core.js renderSummary() -->
+  </div>
+</div>
+
+<!-- =================== SETTINGS TAB =================== -->
+<div class="tab-panel" id="panel-settings" role="tabpanel">
+  <div class="settings-page" id="settingsPage">
+    <!-- Rendered by core.js renderSettings() -->
+  </div>
+</div>
+
+</main>
+
+<!-- FOOTER -->
+<footer class="app-footer">
+  <p class="footer-sources">Sources: RKLB Q4 2025 Earnings Call (Feb 26, 2026), SEC Filings, Perplexity Finance | <a href="https://www.perplexity.ai/finance/RKLB" target="_blank" rel="noopener noreferrer">perplexity.ai/finance/RKLB</a></p>
+  <p class="footer-attr"><a href="https://www.perplexity.ai/computer" target="_blank" rel="noopener noreferrer">Created with Perplexity Computer</a></p>
+</footer>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<!-- BOTTOM SHEET EDITOR -->
+<div class="editor-overlay" id="editorOverlay"></div>
+<div class="editor-sheet" id="editorSheet">
+  <div class="editor-handle"></div>
+  <div class="editor-header">
+    <div class="editor-title-row">
+      <span class="editor-metric-name" id="editorMetricName">Metric</span>
+      <span class="editor-changed-dot" id="editorChangedDot" style="display:none">changed</span>
+      <button class="editor-close" id="editorCloseBtn" aria-label="Close editor">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <span class="editor-year" id="editorYearLabel">FY26E</span>
+  </div>
+  <div class="editor-body">
+    <div class="editor-input-row">
+      <button class="editor-btn down" id="editorDownBtn" aria-label="Decrease">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/></svg>
+      </button>
+      <div class="editor-input-wrap">
+        <span class="editor-prefix" id="editorPrefix"></span>
+        <input type="number" class="editor-input" id="editorInput" inputmode="decimal">
+        <span class="editor-suffix" id="editorSuffix"></span>
+      </div>
+      <button class="editor-btn up" id="editorUpBtn" aria-label="Increase">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+    <p class="editor-hint" id="editorHint"></p>
+    <p class="editor-commentary" id="editorCommentary"></p>
+    <button class="editor-reset" id="editorResetBtn">Reset to Default</button>
+  </div>
+</div>
+
+<!-- Load ticker config first, then shared engine, then revenue tab -->
+<script src="config.js"></script>
+<script src="core.js"></script>
+<script>
+/* ===== REVENUE TAB — Custom rendering for RKLB segment buildup ===== */
+(function() {
+  "use strict";
+  var CFG = window.TICKER_CONFIG;
+  var RB = CFG.revenueBuildup;
+  if (!RB) return;
+
+  function fmt(n) {
+    if (n === 0 || n === null || n === undefined) return "—";
+    if (Math.abs(n) >= 1000000) return "$" + (n / 1000000).toFixed(1) + "B";
+    if (Math.abs(n) >= 1000) return "$" + (n / 1000).toFixed(0) + "M";
+    return "$" + n.toFixed(0) + "K";
+  }
+
+  function pct(n) { return n.toFixed(1) + "%"; }
+
+  function buildRevData() {
+    var years = CFG.years;
+    var a = RB.actual;
+    var rows = [];
+
+    // FY25A actual
+    rows.push({
+      year: years[0],
+      electronLaunches: a.electronLaunches,
+      electronASP: a.electronASP,
+      electronRev: a.electronRevenue,
+      neutronLaunches: a.neutronLaunches,
+      neutronASP: a.neutronASP,
+      neutronRev: a.neutronRevenue,
+      ssRev: a.spaceSystemsRevenue,
+      totalRev: a.totalRevenue
+    });
+
+    var prevSS = a.spaceSystemsRevenue;
+    for (var i = 0; i < RB.projections.length; i++) {
+      var p = RB.projections[i];
+      var eRev = p.electronLaunches * p.electronASP;
+      var nRev = p.neutronLaunches * p.neutronASP;
+      var ssRev = Math.round(prevSS * (1 + p.ssGrowthPct / 100));
+      var total = eRev + nRev + ssRev;
+      rows.push({
+        year: years[i + 1],
+        electronLaunches: p.electronLaunches,
+        electronASP: p.electronASP,
+        electronRev: eRev,
+        neutronLaunches: p.neutronLaunches,
+        neutronASP: p.neutronASP,
+        neutronRev: nRev,
+        ssRev: ssRev,
+        ssGrowthPct: p.ssGrowthPct,
+        totalRev: total
+      });
+      prevSS = ssRev;
+    }
+    return rows;
+  }
+
+  function renderRevTable() {
+    var data = buildRevData();
+    var table = document.getElementById("revBuildupTable");
+    if (!table) return;
+
+    // Show subset of years: FY25A, FY26E, FY27E, FY28E, FY29E, FY30E, FY35E
+    var showIndices = [0, 1, 2, 3, 4, 5, 10];
+    var shown = [];
+    for (var k = 0; k < showIndices.length; k++) {
+      if (showIndices[k] < data.length) shown.push(data[showIndices[k]]);
+    }
+
+    var thead = "<tr><th></th>";
+    for (var i = 0; i < shown.length; i++) {
+      thead += "<th" + (i === 0 ? " class=\"rev-actual-col\"" : "") + ">" + shown[i].year + "</th>";
+    }
+    thead += "</tr>";
+    table.querySelector("thead").innerHTML = thead;
+
+    var rows = [
+      { label: "Electron/HASTE", cls: "rev-row-header", key: "electronRev", format: "dollar" },
+      { label: "  Launches", cls: "rev-row-sub", key: "electronLaunches", format: "num" },
+      { label: "  Rev/Launch ($K)", cls: "rev-row-sub", key: "electronASP", format: "numK" },
+      { label: "Neutron", cls: "rev-row-header", key: "neutronRev", format: "dollar" },
+      { label: "  Launches", cls: "rev-row-sub", key: "neutronLaunches", format: "num" },
+      { label: "  Rev/Launch ($K)", cls: "rev-row-sub", key: "neutronASP", format: "numK" },
+      { label: "Space Systems", cls: "rev-row-header", key: "ssRev", format: "dollar" },
+      { label: "  YoY Growth", cls: "rev-row-growth", key: "ssGrowthPct", format: "pct" },
+      { label: "Total Revenue", cls: "rev-row-total", key: "totalRev", format: "dollar" },
+      { label: "  YoY Growth", cls: "rev-row-growth", key: null, format: "revGrowth" }
+    ];
+
+    var tbody = "";
+    for (var r = 0; r < rows.length; r++) {
+      var row = rows[r];
+      tbody += "<tr class=\"" + row.cls + "\"><td>" + row.label + "</td>";
+      for (var c = 0; c < shown.length; c++) {
+        var val = "";
+        var d = shown[c];
+        var isActual = c === 0 ? " class=\"rev-actual-col\"" : "";
+        if (row.format === "dollar") {
+          val = fmt(d[row.key]);
+        } else if (row.format === "num") {
+          val = d[row.key] === 0 ? "—" : d[row.key].toString();
+        } else if (row.format === "numK") {
+          val = d[row.key] === 0 ? "—" : "$" + (d[row.key] / 1000).toFixed(1) + "M";
+        } else if (row.format === "pct") {
+          val = d[row.key] !== undefined ? pct(d[row.key]) : "—";
+        } else if (row.format === "revGrowth") {
+          if (c === 0) { val = "—"; }
+          else { val = pct(((shown[c].totalRev / shown[c > 0 ? c - 1 : 0].totalRev) - 1) * 100); }
+        }
+        tbody += "<td" + isActual + ">" + val + "</td>";
+      }
+      tbody += "</tr>";
+    }
+    table.querySelector("tbody").innerHTML = tbody;
+  }
+
+  function renderBarChart() {
+    var data = buildRevData();
+    var chart = document.getElementById("revBarChart");
+    if (!chart) return;
+
+    var maxRev = 0;
+    for (var i = 0; i < data.length; i++) {
+      if (data[i].totalRev > maxRev) maxRev = data[i].totalRev;
+    }
+
+    // Show subset
+    var showIndices = [0, 1, 2, 3, 4, 5, 10];
+    var html = "";
+    for (var k = 0; k < showIndices.length; k++) {
+      var idx = showIndices[k];
+      if (idx >= data.length) continue;
+      var d = data[idx];
+      var h = maxRev > 0 ? (d.totalRev / maxRev) * 120 : 0;
+      var ePct = d.totalRev > 0 ? (d.electronRev / d.totalRev) : 0;
+      var nPct = d.totalRev > 0 ? (d.neutronRev / d.totalRev) : 0;
+      var sPct = d.totalRev > 0 ? (d.ssRev / d.totalRev) : 0;
+
+      html += "<div class=\"rev-bar-group\">";
+      html += "<div class=\"rev-bar-value\">" + fmt(d.totalRev) + "</div>";
+      html += "<div class=\"rev-bar-stack\" style=\"height:" + h + "px\">";
+      html += "<div class=\"rev-bar-segment\" style=\"height:" + (sPct * 100) + "%;background:#f59e0b\"></div>";
+      html += "<div class=\"rev-bar-segment\" style=\"height:" + (nPct * 100) + "%;background:#22c55e\"></div>";
+      html += "<div class=\"rev-bar-segment\" style=\"height:" + (ePct * 100) + "%;background:#20808D\"></div>";
+      html += "</div>";
+      html += "<div class=\"rev-bar-label\">" + d.year.replace("FY","'").replace("A","A").replace("E","E") + "</div>";
+      html += "</div>";
+    }
+    chart.innerHTML = html;
+  }
+
+  function renderAssumptions() {
+    var grid = document.getElementById("revAssumptionsGrid");
+    if (!grid) return;
+
+    grid.innerHTML =
+      "<div class=\"rev-assumption-card\">" +
+        "<div class=\"rev-assumption-title\">Electron/HASTE</div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY25 Launches</span><span class=\"rev-assumption-val\">21 (record)</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY26E Launches</span><span class=\"rev-assumption-val\">25 (~20% growth)</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Rev/Launch FY25</span><span class=\"rev-assumption-val\">$9.5M</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Rev/Launch FY26E</span><span class=\"rev-assumption-val\">$9.9M</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Build Cadence</span><span class=\"rev-assumption-val\">Every 11-13 days</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">HASTE Mix</span><span class=\"rev-assumption-val\">Growing (higher ASP)</span></div>" +
+      "</div>" +
+      "<div class=\"rev-assumption-card\">" +
+        "<div class=\"rev-assumption-title\">Neutron</div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">First Flight</span><span class=\"rev-assumption-val\">Q4 2026</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY27E Launches</span><span class=\"rev-assumption-val\">3 (initial ramp)</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY30E Launches</span><span class=\"rev-assumption-val\">20</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Target Rev/Launch</span><span class=\"rev-assumption-val\">$55-63M</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Payload Capacity</span><span class=\"rev-assumption-val\">13t to LEO</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Reusability</span><span class=\"rev-assumption-val\">Stage 1 recovery</span></div>" +
+      "</div>" +
+      "<div class=\"rev-assumption-card\">" +
+        "<div class=\"rev-assumption-title\">Space Systems</div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY25 Revenue</span><span class=\"rev-assumption-val\">$403M</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY25 Growth</span><span class=\"rev-assumption-val\">+30% YoY</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">SDA Tranche 3</span><span class=\"rev-assumption-val\">$816M (18 sats)</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">SDA Combined</span><span class=\"rev-assumption-val\">$1.3B+</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Backlog</span><span class=\"rev-assumption-val\">$1.37B</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Conversion Rate</span><span class=\"rev-assumption-val\">37% in 12 months</span></div>" +
+      "</div>" +
+      "<div class=\"rev-assumption-card\">" +
+        "<div class=\"rev-assumption-title\">Launch Backlog</div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Total Backlog</span><span class=\"rev-assumption-val\">$1.85B</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Launch Backlog</span><span class=\"rev-assumption-val\">$476M (26%)</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">SS Backlog</span><span class=\"rev-assumption-val\">$1.37B (74%)</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY25 Bookings</span><span class=\"rev-assumption-val\">30+ new Electron</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Neutron in Backlog</span><span class=\"rev-assumption-val\">Several flights</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">MDA Shield Ceiling</span><span class=\"rev-assumption-val\">$151B</span></div>" +
+      "</div>";
+  }
+
+  function renderHistorical() {
+    var table = document.getElementById("revHistoricalTable");
+    if (!table) return;
+
+    var hist = [
+      { year: "FY21", launchRev: 38971, ssRev: 23266, launches: 6, revPerLaunch: 8.1, costPerLaunch: 9.2, launchGM: -38.1, ssGM: 55.7, backlog: 241500 },
+      { year: "FY22", launchRev: 60686, ssRev: 150310, launches: 9, revPerLaunch: 6.7, costPerLaunch: 7.5, launchGM: -11.5, ssGM: 17.3, backlog: 503600 },
+      { year: "FY23", launchRev: 71894, ssRev: 172698, launches: 10, revPerLaunch: 7.1, costPerLaunch: 7.0, launchGM: 11.2, ssGM: 25.1, backlog: 1046100 },
+      { year: "FY24", launchRev: 125376, ssRev: 310838, launches: 16, revPerLaunch: 7.8, costPerLaunch: 5.7, launchGM: 27.6, ssGM: 26.2, backlog: 1067000 },
+      { year: "FY25", launchRev: 199042, ssRev: 402757, launches: 21, revPerLaunch: 8.5, costPerLaunch: 4.8, launchGM: 40.8, ssGM: 31.3, backlog: 1847300 }
+    ];
+
+    var thead = "<tr><th></th>";
+    for (var i = 0; i < hist.length; i++) thead += "<th>" + hist[i].year + "</th>";
+    thead += "</tr>";
+    table.querySelector("thead").innerHTML = thead;
+
+    var metrics = [
+      { label: "Launch Rev", key: "launchRev", format: "dollar" },
+      { label: "Space Sys Rev", key: "ssRev", format: "dollar" },
+      { label: "Total Revenue", key: null, format: "total" },
+      { label: "Launches", key: "launches", format: "num" },
+      { label: "Rev/Launch ($M)", key: "revPerLaunch", format: "dec1" },
+      { label: "Cost/Launch ($M)", key: "costPerLaunch", format: "dec1" },
+      { label: "Launch GM %", key: "launchGM", format: "pct" },
+      { label: "Space Sys GM %", key: "ssGM", format: "pct" },
+      { label: "Total Backlog", key: "backlog", format: "dollar" }
+    ];
+
+    var tbody = "";
+    for (var r = 0; r < metrics.length; r++) {
+      var m = metrics[r];
+      var cls = m.format === "total" ? "rev-row-total" : (r === 0 || r === 1 ? "rev-row-header" : "");
+      tbody += "<tr class=\"" + cls + "\"><td>" + m.label + "</td>";
+      for (var c = 0; c < hist.length; c++) {
+        var val = "";
+        if (m.format === "dollar") val = fmt(hist[c][m.key]);
+        else if (m.format === "total") val = fmt(hist[c].launchRev + hist[c].ssRev);
+        else if (m.format === "num") val = hist[c][m.key].toString();
+        else if (m.format === "dec1") val = "$" + hist[c][m.key].toFixed(1) + "M";
+        else if (m.format === "pct") val = hist[c][m.key].toFixed(1) + "%";
+        tbody += "<td>" + val + "</td>";
+      }
+      tbody += "</tr>";
+    }
+    table.querySelector("tbody").innerHTML = tbody;
+  }
+
+  // Initial render
+  function initRevTab() {
+    renderRevTable();
+    renderBarChart();
+    renderAssumptions();
+    renderHistorical();
+  }
+
+  // Run on load
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initRevTab);
+  } else {
+    initRevTab();
+  }
+
+  // Re-render when Revenue tab becomes active
+  var tabBtns = document.querySelectorAll("[data-tab]");
+  for (var i = 0; i < tabBtns.length; i++) {
+    tabBtns[i].addEventListener("click", function() {
+      if (this.getAttribute("data-tab") === "revenue") {
+        setTimeout(initRevTab, 50);
+      }
+    });
+  }
+})();
+</script>
+</body>
+</html>
