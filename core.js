@@ -78,7 +78,8 @@
     decayStartYear: 2, // index into YEARS: 2 = FY27E (default). Decay applies from this year onward.
     peGrowthThreshold: 8, // % revenue growth that triggers P/E convergence (default 8)
     peMultiple: 20,       // P/E multiple applied at convergence (default 20x)
-    valuationMode: "blended" // "blended" (avg DCF+PE), "dcf" (DCF only), "pe" (PE only)
+    valuationMode: "blended", // "blended" (avg DCF+PE), "dcf" (DCF only), "pe" (PE only)
+    revenueDriverMode: "decay" // "decay" (growth rate decay) or "buildup" (detailed segment buildup from Revenue tab)
   };
 
   // ========== EDITABLE METRICS CONFIG ==========
@@ -479,6 +480,14 @@
       }
 
       data.revenue[i] = data.tests[i] * data.asp[i];
+
+      // Revenue Buildup Override: when in "buildup" mode, override revenue
+      // from the detailed segment build (Electron + Neutron + Space Systems)
+      if (settings.revenueDriverMode === "buildup" && window._revBuildupTotals && window._revBuildupTotals[i]) {
+        data.revenue[i] = window._revBuildupTotals[i];
+        data.tests[i] = data.revenue[i]; // keep tests in sync (since asp = 1)
+      }
+
       data.revYoY[i] = (data.revenue[i] / data.revenue[i - 1]) - 1;
 
       // ---- Gross Margin ----
@@ -1352,7 +1361,7 @@
       { label: RD_VOL_YOY, key: "testsYoY", format: "pct", cls: "", hideIf: false },
       { label: RD_ASP_LABEL, key: "asp", format: "dollar", cls: "", hideIf: RD_HIDE_ASP },
       { label: RD_ASP_YOY, key: "aspYoY", format: "pct", cls: "", hideIf: RD_HIDE_ASP },
-      { label: "Revenue", key: "revenue", format: "dollarM", cls: "row-revenue" },
+      { label: (settings.revenueDriverMode === "buildup" && CFG.revenueBuildup) ? "Revenue \u25C0" : "Revenue", key: "revenue", format: "dollarM", cls: "row-revenue" },
       { label: "Consensus Rev", key: "consensusRevenue", format: "dollarM", cls: "row-consensus" },
       { label: "Rev YoY %", key: "revYoY", format: "pct", cls: "" },
       { label: "Rev Growth Decay", key: "revGrowthDecay", format: "decayX", cls: "row-decay" },
@@ -3215,7 +3224,44 @@
     html += '</div>';
     html += '</div>';
 
+    // Revenue Driver Mode (only show if config has revenueBuildup data)
+    if (CFG.revenueBuildup) {
+      html += '<div class="set-section">';
+      html += '<div class="set-row">';
+      html += '<div class="set-row-info">';
+      html += '<span class="set-label">Revenue Driver</span>';
+      html += '<span class="set-desc">Growth Rate Decay uses the main model\'s interpolated growth. Detailed Buildup uses segment-level assumptions from the Revenue tab.</span>';
+      html += '</div>';
+      var rdMode = settings.revenueDriverMode || "decay";
+      html += '<div class="set-toggle-group" id="revDriverModeToggle">';
+      var rdOpts = [{key:"decay",lbl:"Decay"},{key:"buildup",lbl:"Buildup"}];
+      for (var rdi = 0; rdi < rdOpts.length; rdi++) {
+        var rdActive = rdOpts[rdi].key === rdMode ? ' active' : '';
+        html += '<button class="set-toggle-btn' + rdActive + '" data-rev-driver="' + rdOpts[rdi].key + '">' + rdOpts[rdi].lbl + '</button>';
+      }
+      html += '</div>';
+      html += '</div>';
+      html += '</div>';
+    }
+
     container.innerHTML = html;
+
+    // Bind Revenue Driver Mode toggles
+    var revDriverBtns = container.querySelectorAll("[data-rev-driver]");
+    for (var rbi = 0; rbi < revDriverBtns.length; rbi++) {
+      revDriverBtns[rbi].addEventListener("click", function () {
+        var mode = this.getAttribute("data-rev-driver");
+        settings.revenueDriverMode = mode;
+        var all = container.querySelectorAll("[data-rev-driver]");
+        for (var j = 0; j < all.length; j++) all[j].classList.remove("active");
+        this.classList.add("active");
+        updateUI();
+        // Also notify the Revenue tab to refresh if it has a render function
+        if (window._revTabRefresh) window._revTabRefresh();
+        var modeLabels = { decay: "Growth Rate Decay", buildup: "Detailed Revenue Buildup" };
+        showToast("Revenue: " + (modeLabels[mode] || mode));
+      });
+    }
 
     // Bind DCF base year toggles
     var baseYrBtns = container.querySelectorAll("[data-base-yr]");
@@ -3583,6 +3629,10 @@
 
     // Mark init as done so live price sync can trigger re-renders
     _livepriceInitDone = true;
+
+    // Expose hooks for custom tabs (e.g., Revenue Buildup) to trigger model re-run
+    window._coreUpdateUI = updateUI;
+    window._coreSettings = settings;
   }
 
   if (document.readyState === "loading") {

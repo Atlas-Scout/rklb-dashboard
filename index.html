@@ -52,6 +52,26 @@
 .rev-table .rev-actual-col { background: rgba(32, 128, 141, 0.06); }
 .rev-table .rev-pct-mix { font-size: 10px; color: var(--color-muted); }
 
+/* Editable cells in revenue table */
+.rev-cell-edit { cursor: pointer; background: rgba(32, 128, 141, 0.08); color: var(--color-primary); font-weight: 600; border-radius: 3px; transition: background 0.15s; }
+.rev-cell-edit:hover { background: rgba(32, 128, 141, 0.18); }
+
+/* Mode indicator badges */
+.rev-mode-badge { display: inline-block; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; }
+.rev-mode-active { background: rgba(32, 128, 141, 0.15); color: var(--color-primary); border: 1px solid rgba(32, 128, 141, 0.3); }
+.rev-mode-inactive { background: rgba(255, 255, 255, 0.04); color: var(--color-muted); border: 1px solid var(--color-border); }
+
+/* Revenue editor bottom sheet */
+.rev-editor-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 999; opacity: 0; pointer-events: none; transition: opacity 0.2s; }
+.rev-editor-overlay.visible { opacity: 1; pointer-events: auto; }
+.rev-editor-sheet { position: fixed; bottom: 0; left: 0; right: 0; background: var(--color-surface); border-radius: 16px 16px 0 0; padding: 12px 20px 28px; z-index: 1000; transform: translateY(100%); transition: transform 0.25s ease; box-shadow: 0 -4px 24px rgba(0,0,0,0.3); }
+.rev-editor-sheet.visible { transform: translateY(0); }
+.rev-editor-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.rev-editor-label { font-weight: 600; font-size: 14px; color: var(--color-text); }
+.rev-editor-year { font-size: 12px; color: var(--color-muted); }
+.rev-editor-header .editor-close { margin-left: auto; background: none; border: none; color: var(--color-muted); cursor: pointer; padding: 4px; }
+.rev-editor-body { margin-top: 4px; }
+
 .rev-bar-chart { display: flex; align-items: flex-end; gap: 4px; height: 140px; margin: 16px 0; padding: 0 4px; }
 .rev-bar-group { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .rev-bar-stack { width: 100%; display: flex; flex-direction: column-reverse; border-radius: 3px 3px 0 0; overflow: hidden; }
@@ -172,6 +192,9 @@
 
 <!-- =================== REVENUE TAB =================== -->
 <div class="tab-panel" id="panel-revenue" role="tabpanel">
+
+  <!-- Mode Indicator -->
+  <div id="revModeIndicator" style="margin-bottom:12px"></div>
 
   <!-- Revenue Hero Cards -->
   <div class="rev-tab-hero" id="revHeroCards">
@@ -486,22 +509,37 @@
 <script src="config.js"></script>
 <script src="core.js"></script>
 <script>
-/* ===== REVENUE TAB — Custom rendering for RKLB segment buildup ===== */
+/* ===== REVENUE TAB — Interactive segment buildup for RKLB ===== */
 (function() {
   "use strict";
   var CFG = window.TICKER_CONFIG;
   var RB = CFG.revenueBuildup;
   if (!RB) return;
 
+  // ===== EDITABLE STATE =====
+  // Deep-copy projection defaults so we can mutate without touching config
+  var projState = [];
+  for (var pi = 0; pi < RB.projections.length; pi++) {
+    var src = RB.projections[pi];
+    projState.push({
+      electronLaunches: src.electronLaunches,
+      electronASP: src.electronASP,
+      neutronLaunches: src.neutronLaunches,
+      neutronASP: src.neutronASP,
+      ssGrowthPct: src.ssGrowthPct
+    });
+  }
+
+  // ===== FORMATTING =====
   function fmt(n) {
-    if (n === 0 || n === null || n === undefined) return "—";
+    if (n === 0 || n === null || n === undefined) return "\u2014";
     if (Math.abs(n) >= 1000000) return "$" + (n / 1000000).toFixed(1) + "B";
     if (Math.abs(n) >= 1000) return "$" + (n / 1000).toFixed(0) + "M";
     return "$" + n.toFixed(0) + "K";
   }
-
   function pct(n) { return n.toFixed(1) + "%"; }
 
+  // ===== BUILD REVENUE DATA FROM STATE =====
   function buildRevData() {
     var years = CFG.years;
     var a = RB.actual;
@@ -517,12 +555,13 @@
       neutronASP: a.neutronASP,
       neutronRev: a.neutronRevenue,
       ssRev: a.spaceSystemsRevenue,
-      totalRev: a.totalRevenue
+      totalRev: a.totalRevenue,
+      isActual: true
     });
 
     var prevSS = a.spaceSystemsRevenue;
-    for (var i = 0; i < RB.projections.length; i++) {
-      var p = RB.projections[i];
+    for (var i = 0; i < projState.length; i++) {
+      var p = projState[i];
       var eRev = p.electronLaunches * p.electronASP;
       var nRev = p.neutronLaunches * p.neutronASP;
       var ssRev = Math.round(prevSS * (1 + p.ssGrowthPct / 100));
@@ -537,72 +576,216 @@
         neutronRev: nRev,
         ssRev: ssRev,
         ssGrowthPct: p.ssGrowthPct,
-        totalRev: total
+        totalRev: total,
+        isActual: false
       });
       prevSS = ssRev;
     }
     return rows;
   }
 
+  // ===== SYNC TOTALS TO CORE.JS =====
+  function syncTotals() {
+    var data = buildRevData();
+    var totals = new Array(data.length);
+    for (var i = 0; i < data.length; i++) {
+      totals[i] = data[i].totalRev;
+    }
+    window._revBuildupTotals = totals;
+    // Trigger core model re-run if available
+    if (window._coreUpdateUI) {
+      window._coreUpdateUI();
+    }
+  }
+
+  // ===== CHECK IF BUILDUP MODE IS ACTIVE =====
+  function isBuildupActive() {
+    return window._coreSettings && window._coreSettings.revenueDriverMode === "buildup";
+  }
+
+  // ===== RENDER EDITABLE TABLE =====
   function renderRevTable() {
     var data = buildRevData();
     var table = document.getElementById("revBuildupTable");
     if (!table) return;
+    var active = isBuildupActive();
 
-    // Show subset of years: FY25A, FY26E, FY27E, FY28E, FY29E, FY30E, FY35E
-    var showIndices = [0, 1, 2, 3, 4, 5, 10];
-    var shown = [];
-    for (var k = 0; k < showIndices.length; k++) {
-      if (showIndices[k] < data.length) shown.push(data[showIndices[k]]);
-    }
-
+    // Show ALL years (FY25A + FY26E through FY35E)
     var thead = "<tr><th></th>";
-    for (var i = 0; i < shown.length; i++) {
-      thead += "<th" + (i === 0 ? " class=\"rev-actual-col\"" : "") + ">" + shown[i].year + "</th>";
+    for (var i = 0; i < data.length; i++) {
+      thead += "<th" + (i === 0 ? " class=\"rev-actual-col\"" : "") + ">" + data[i].year + "</th>";
     }
     thead += "</tr>";
     table.querySelector("thead").innerHTML = thead;
 
-    var rows = [
+    var rowDefs = [
       { label: "Electron/HASTE", cls: "rev-row-header", key: "electronRev", format: "dollar" },
-      { label: "  Launches", cls: "rev-row-sub", key: "electronLaunches", format: "num" },
-      { label: "  Rev/Launch ($K)", cls: "rev-row-sub", key: "electronASP", format: "numK" },
+      { label: "  Launches", cls: "rev-row-sub", key: "electronLaunches", format: "num", editKey: "electronLaunches", inc: 1, min: 0, max: 50 },
+      { label: "  Rev/Launch ($K)", cls: "rev-row-sub", key: "electronASP", format: "numK", editKey: "electronASP", inc: 200, min: 5000, max: 20000 },
       { label: "Neutron", cls: "rev-row-header", key: "neutronRev", format: "dollar" },
-      { label: "  Launches", cls: "rev-row-sub", key: "neutronLaunches", format: "num" },
-      { label: "  Rev/Launch ($K)", cls: "rev-row-sub", key: "neutronASP", format: "numK" },
+      { label: "  Launches", cls: "rev-row-sub", key: "neutronLaunches", format: "num", editKey: "neutronLaunches", inc: 1, min: 0, max: 60 },
+      { label: "  Rev/Launch ($K)", cls: "rev-row-sub", key: "neutronASP", format: "numK", editKey: "neutronASP", inc: 1000, min: 0, max: 100000 },
       { label: "Space Systems", cls: "rev-row-header", key: "ssRev", format: "dollar" },
-      { label: "  YoY Growth", cls: "rev-row-growth", key: "ssGrowthPct", format: "pct" },
+      { label: "  YoY Growth", cls: "rev-row-growth", key: "ssGrowthPct", format: "pct", editKey: "ssGrowthPct", inc: 1, min: -10, max: 60 },
       { label: "Total Revenue", cls: "rev-row-total", key: "totalRev", format: "dollar" },
       { label: "  YoY Growth", cls: "rev-row-growth", key: null, format: "revGrowth" }
     ];
 
     var tbody = "";
-    for (var r = 0; r < rows.length; r++) {
-      var row = rows[r];
+    for (var r = 0; r < rowDefs.length; r++) {
+      var row = rowDefs[r];
       tbody += "<tr class=\"" + row.cls + "\"><td>" + row.label + "</td>";
-      for (var c = 0; c < shown.length; c++) {
+      for (var c = 0; c < data.length; c++) {
+        var d = data[c];
+        var isActualCol = c === 0 ? " rev-actual-col" : "";
         var val = "";
-        var d = shown[c];
-        var isActual = c === 0 ? " class=\"rev-actual-col\"" : "";
+
         if (row.format === "dollar") {
           val = fmt(d[row.key]);
         } else if (row.format === "num") {
-          val = d[row.key] === 0 ? "—" : d[row.key].toString();
+          val = d[row.key] === 0 ? "\u2014" : d[row.key].toString();
         } else if (row.format === "numK") {
-          val = d[row.key] === 0 ? "—" : "$" + (d[row.key] / 1000).toFixed(1) + "M";
+          val = d[row.key] === 0 ? "\u2014" : "$" + (d[row.key] / 1000).toFixed(1) + "M";
         } else if (row.format === "pct") {
-          val = d[row.key] !== undefined ? pct(d[row.key]) : "—";
+          val = d[row.key] !== undefined ? pct(d[row.key]) : "\u2014";
         } else if (row.format === "revGrowth") {
-          if (c === 0) { val = "—"; }
-          else { val = pct(((shown[c].totalRev / shown[c > 0 ? c - 1 : 0].totalRev) - 1) * 100); }
+          if (c === 0) { val = "\u2014"; }
+          else { val = pct(((data[c].totalRev / data[c > 0 ? c - 1 : 0].totalRev) - 1) * 100); }
         }
-        tbody += "<td" + isActual + ">" + val + "</td>";
+
+        // Make estimate cells editable when in buildup mode
+        var isEditable = active && !d.isActual && row.editKey;
+        if (isEditable) {
+          tbody += "<td class=\"rev-cell-edit" + isActualCol + "\" data-proj-idx=\"" + (c - 1) + "\" data-edit-key=\"" + row.editKey + "\" data-inc=\"" + row.inc + "\" data-min=\"" + row.min + "\" data-max=\"" + row.max + "\">" + val + "</td>";
+        } else {
+          tbody += "<td class=\"" + isActualCol + "\">" + val + "</td>";
+        }
       }
       tbody += "</tr>";
     }
     table.querySelector("tbody").innerHTML = tbody;
+
+    // Bind click handlers for editable cells
+    if (active) {
+      var editCells = table.querySelectorAll(".rev-cell-edit");
+      for (var ei = 0; ei < editCells.length; ei++) {
+        editCells[ei].addEventListener("click", function() {
+          openRevEditor(this);
+        });
+      }
+    }
   }
 
+  // ===== MINI EDITOR (BOTTOM SHEET) =====
+  var editorEl = null;
+  var editorOverlayEl = null;
+  var currentEditCell = null;
+
+  function createEditorDOM() {
+    if (editorEl) return;
+    editorOverlayEl = document.createElement("div");
+    editorOverlayEl.className = "rev-editor-overlay";
+    editorOverlayEl.addEventListener("click", closeRevEditor);
+
+    editorEl = document.createElement("div");
+    editorEl.className = "rev-editor-sheet";
+    editorEl.innerHTML =
+      '<div class="editor-handle"></div>' +
+      '<div class="rev-editor-header">' +
+        '<span class="rev-editor-label" id="revEdLabel">Metric</span>' +
+        '<span class="rev-editor-year" id="revEdYear">FY26E</span>' +
+        '<button class="editor-close" id="revEdClose" aria-label="Close">' +
+          '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>' +
+        '</button>' +
+      '</div>' +
+      '<div class="rev-editor-body">' +
+        '<div class="editor-input-row">' +
+          '<button class="editor-btn down" id="revEdDown" aria-label="Decrease">' +
+            '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14"/></svg>' +
+          '</button>' +
+          '<div class="editor-input-wrap">' +
+            '<input type="number" class="editor-input" id="revEdInput" inputmode="decimal">' +
+          '</div>' +
+          '<button class="editor-btn up" id="revEdUp" aria-label="Increase">' +
+            '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>' +
+          '</button>' +
+        '</div>' +
+      '</div>';
+
+    document.body.appendChild(editorOverlayEl);
+    document.body.appendChild(editorEl);
+
+    document.getElementById("revEdClose").addEventListener("click", closeRevEditor);
+    document.getElementById("revEdDown").addEventListener("click", function() { revEdIncrement(-1); });
+    document.getElementById("revEdUp").addEventListener("click", function() { revEdIncrement(1); });
+    document.getElementById("revEdInput").addEventListener("change", function() { revEdApply(parseFloat(this.value)); });
+    document.getElementById("revEdInput").addEventListener("keydown", function(e) {
+      if (e.key === "Enter") { revEdApply(parseFloat(this.value)); }
+    });
+  }
+
+  function openRevEditor(cell) {
+    createEditorDOM();
+    currentEditCell = cell;
+    var projIdx = parseInt(cell.getAttribute("data-proj-idx"), 10);
+    var editKey = cell.getAttribute("data-edit-key");
+    var currentVal = projState[projIdx][editKey];
+
+    // Label map
+    var labelMap = {
+      electronLaunches: "Electron Launches",
+      electronASP: "Electron Rev/Launch ($K)",
+      neutronLaunches: "Neutron Launches",
+      neutronASP: "Neutron Rev/Launch ($K)",
+      ssGrowthPct: "Space Systems YoY Growth %"
+    };
+
+    document.getElementById("revEdLabel").textContent = labelMap[editKey] || editKey;
+    document.getElementById("revEdYear").textContent = CFG.years[projIdx + 1];
+    document.getElementById("revEdInput").value = currentVal;
+
+    editorOverlayEl.classList.add("visible");
+    editorEl.classList.add("visible");
+  }
+
+  function closeRevEditor() {
+    if (editorOverlayEl) editorOverlayEl.classList.remove("visible");
+    if (editorEl) editorEl.classList.remove("visible");
+    currentEditCell = null;
+  }
+
+  function revEdIncrement(dir) {
+    if (!currentEditCell) return;
+    var projIdx = parseInt(currentEditCell.getAttribute("data-proj-idx"), 10);
+    var editKey = currentEditCell.getAttribute("data-edit-key");
+    var inc = parseFloat(currentEditCell.getAttribute("data-inc"));
+    var min = parseFloat(currentEditCell.getAttribute("data-min"));
+    var max = parseFloat(currentEditCell.getAttribute("data-max"));
+
+    var newVal = projState[projIdx][editKey] + (dir * inc);
+    newVal = Math.max(min, Math.min(max, newVal));
+    revEdApply(newVal);
+  }
+
+  function revEdApply(val) {
+    if (!currentEditCell || isNaN(val)) return;
+    var projIdx = parseInt(currentEditCell.getAttribute("data-proj-idx"), 10);
+    var editKey = currentEditCell.getAttribute("data-edit-key");
+    var min = parseFloat(currentEditCell.getAttribute("data-min"));
+    var max = parseFloat(currentEditCell.getAttribute("data-max"));
+
+    val = Math.max(min, Math.min(max, val));
+    projState[projIdx][editKey] = val;
+    document.getElementById("revEdInput").value = val;
+
+    // Re-render and sync
+    renderRevTable();
+    renderBarChart();
+    syncTotals();
+    renderModeIndicator();
+  }
+
+  // ===== BAR CHART =====
   function renderBarChart() {
     var data = buildRevData();
     var chart = document.getElementById("revBarChart");
@@ -613,17 +796,14 @@
       if (data[i].totalRev > maxRev) maxRev = data[i].totalRev;
     }
 
-    // Show subset
-    var showIndices = [0, 1, 2, 3, 4, 5, 10];
     var html = "";
-    for (var k = 0; k < showIndices.length; k++) {
-      var idx = showIndices[k];
-      if (idx >= data.length) continue;
-      var d = data[idx];
+    for (var k = 0; k < data.length; k++) {
+      var d = data[k];
       var h = maxRev > 0 ? (d.totalRev / maxRev) * 120 : 0;
       var ePct = d.totalRev > 0 ? (d.electronRev / d.totalRev) : 0;
       var nPct = d.totalRev > 0 ? (d.neutronRev / d.totalRev) : 0;
       var sPct = d.totalRev > 0 ? (d.ssRev / d.totalRev) : 0;
+      var label = d.year.replace("FY","'").replace("A","A").replace("E","E");
 
       html += "<div class=\"rev-bar-group\">";
       html += "<div class=\"rev-bar-value\">" + fmt(d.totalRev) + "</div>";
@@ -632,12 +812,25 @@
       html += "<div class=\"rev-bar-segment\" style=\"height:" + (nPct * 100) + "%;background:#22c55e\"></div>";
       html += "<div class=\"rev-bar-segment\" style=\"height:" + (ePct * 100) + "%;background:#20808D\"></div>";
       html += "</div>";
-      html += "<div class=\"rev-bar-label\">" + d.year.replace("FY","'").replace("A","A").replace("E","E") + "</div>";
+      html += "<div class=\"rev-bar-label\">" + label + "</div>";
       html += "</div>";
     }
     chart.innerHTML = html;
   }
 
+  // ===== MODE INDICATOR =====
+  function renderModeIndicator() {
+    var indicator = document.getElementById("revModeIndicator");
+    if (!indicator) return;
+    var active = isBuildupActive();
+    if (active) {
+      indicator.innerHTML = '<span class="rev-mode-badge rev-mode-active">&#9679; Buildup Active &mdash; Revenue tab drives the income statement</span>';
+    } else {
+      indicator.innerHTML = '<span class="rev-mode-badge rev-mode-inactive">Buildup Inactive &mdash; Switch to Buildup in Settings to feed these assumptions into the model</span>';
+    }
+  }
+
+  // ===== ASSUMPTIONS CARDS (static info) =====
   function renderAssumptions() {
     var grid = document.getElementById("revAssumptionsGrid");
     if (!grid) return;
@@ -646,41 +839,34 @@
       "<div class=\"rev-assumption-card\">" +
         "<div class=\"rev-assumption-title\">Electron/HASTE</div>" +
         "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY25 Launches</span><span class=\"rev-assumption-val\">21 (record)</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY26E Launches</span><span class=\"rev-assumption-val\">25 (~20% growth)</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Rev/Launch FY25</span><span class=\"rev-assumption-val\">$9.5M</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Rev/Launch FY26E</span><span class=\"rev-assumption-val\">$9.9M</span></div>" +
         "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Build Cadence</span><span class=\"rev-assumption-val\">Every 11-13 days</span></div>" +
         "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">HASTE Mix</span><span class=\"rev-assumption-val\">Growing (higher ASP)</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Peak Capacity</span><span class=\"rev-assumption-val\">~30 launches/yr</span></div>" +
       "</div>" +
       "<div class=\"rev-assumption-card\">" +
         "<div class=\"rev-assumption-title\">Neutron</div>" +
         "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">First Flight</span><span class=\"rev-assumption-val\">Q4 2026</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY27E Launches</span><span class=\"rev-assumption-val\">3 (initial ramp)</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY30E Launches</span><span class=\"rev-assumption-val\">20</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Target Rev/Launch</span><span class=\"rev-assumption-val\">$55-63M</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Payload Capacity</span><span class=\"rev-assumption-val\">13t to LEO</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Payload to LEO</span><span class=\"rev-assumption-val\">13 tonnes</span></div>" +
         "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Reusability</span><span class=\"rev-assumption-val\">Stage 1 recovery</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Target Rev/Launch</span><span class=\"rev-assumption-val\">$55-63M</span></div>" +
       "</div>" +
       "<div class=\"rev-assumption-card\">" +
         "<div class=\"rev-assumption-title\">Space Systems</div>" +
         "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY25 Revenue</span><span class=\"rev-assumption-val\">$403M</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY25 Growth</span><span class=\"rev-assumption-val\">+30% YoY</span></div>" +
         "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">SDA Tranche 3</span><span class=\"rev-assumption-val\">$816M (18 sats)</span></div>" +
         "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">SDA Combined</span><span class=\"rev-assumption-val\">$1.3B+</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Backlog</span><span class=\"rev-assumption-val\">$1.37B</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Conversion Rate</span><span class=\"rev-assumption-val\">37% in 12 months</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Backlog</span><span class=\"rev-assumption-val\">$1.37B (SS only)</span></div>" +
       "</div>" +
       "<div class=\"rev-assumption-card\">" +
-        "<div class=\"rev-assumption-title\">Launch Backlog</div>" +
+        "<div class=\"rev-assumption-title\">Backlog Overview</div>" +
         "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Total Backlog</span><span class=\"rev-assumption-val\">$1.85B</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Launch Backlog</span><span class=\"rev-assumption-val\">$476M (26%)</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">SS Backlog</span><span class=\"rev-assumption-val\">$1.37B (74%)</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">FY25 Bookings</span><span class=\"rev-assumption-val\">30+ new Electron</span></div>" +
-        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">Neutron in Backlog</span><span class=\"rev-assumption-val\">Several flights</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">SS / Launch Mix</span><span class=\"rev-assumption-val\">74% / 26%</span></div>" +
+        "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">12mo Conversion</span><span class=\"rev-assumption-val\">37%</span></div>" +
         "<div class=\"rev-assumption-item\"><span class=\"rev-assumption-key\">MDA Shield Ceiling</span><span class=\"rev-assumption-val\">$151B</span></div>" +
       "</div>";
   }
 
+  // ===== HISTORICAL TABLE =====
   function renderHistorical() {
     var table = document.getElementById("revHistoricalTable");
     if (!table) return;
@@ -729,19 +915,36 @@
     table.querySelector("tbody").innerHTML = tbody;
   }
 
-  // Initial render
-  function initRevTab() {
+  // ===== INIT & REFRESH =====
+  function fullRender() {
+    renderModeIndicator();
     renderRevTable();
     renderBarChart();
     renderAssumptions();
     renderHistorical();
+    // Always sync totals so they're ready when user switches to buildup mode
+    syncTotalsQuiet();
   }
 
-  // Run on load
+  // Sync totals without triggering core updateUI (to avoid infinite loop on init)
+  function syncTotalsQuiet() {
+    var data = buildRevData();
+    var totals = new Array(data.length);
+    for (var i = 0; i < data.length; i++) {
+      totals[i] = data[i].totalRev;
+    }
+    window._revBuildupTotals = totals;
+  }
+
+  // Expose refresh for core.js to call when settings change
+  window._revTabRefresh = fullRender;
+
+  // Initial render
   if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", initRevTab);
+    document.addEventListener("DOMContentLoaded", fullRender);
   } else {
-    initRevTab();
+    // Delay slightly to ensure core.js init() has run
+    setTimeout(fullRender, 100);
   }
 
   // Re-render when Revenue tab becomes active
@@ -749,7 +952,7 @@
   for (var i = 0; i < tabBtns.length; i++) {
     tabBtns[i].addEventListener("click", function() {
       if (this.getAttribute("data-tab") === "revenue") {
-        setTimeout(initRevTab, 50);
+        setTimeout(fullRender, 50);
       }
     });
   }
