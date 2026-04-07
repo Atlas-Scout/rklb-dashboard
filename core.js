@@ -3621,6 +3621,7 @@
     bindEditor();
     bindPriceViewButtons();
     bindRefreshButton();
+    bindSaveLoad();
     refreshScenarioList();
     updateUI();
 
@@ -3633,6 +3634,113 @@
     // Expose hooks for custom tabs (e.g., Revenue Buildup) to trigger model re-run
     window._coreUpdateUI = updateUI;
     window._coreSettings = settings;
+  }
+
+  // ========== SAVE / LOAD ASSUMPTIONS ==========
+  function saveAssumptions() {
+    var now = new Date();
+    var pad = function(n) { return n < 10 ? "0" + n : "" + n; };
+    var datePart = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+    var timePart = pad(now.getHours()) + pad(now.getMinutes());
+    var filename = "RKLB_assumptions_" + datePart + "_" + timePart + ".json";
+
+    var payload = {
+      _ticker: CFG.ticker,
+      _savedAt: now.toISOString(),
+      _version: 1,
+      state: {},
+      lerpMode: {},
+      perYear: {}
+    };
+
+    var k;
+    for (k in state) {
+      if (state.hasOwnProperty(k)) payload.state[k] = state[k];
+    }
+    for (k in lerpMode) {
+      if (lerpMode.hasOwnProperty(k)) payload.lerpMode[k] = lerpMode[k];
+    }
+    for (k in perYear) {
+      if (perYear.hasOwnProperty(k)) payload.perYear[k] = perYear[k].slice();
+    }
+
+    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
+    showToast("Saved: " + filename);
+  }
+
+  function loadAssumptions(file) {
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      var data;
+      try {
+        data = JSON.parse(e.target.result);
+      } catch (err) {
+        showToast("Error: invalid JSON file");
+        return;
+      }
+
+      if (data._version !== 1) {
+        showToast("Error: unsupported file version");
+        return;
+      }
+
+      if (data._ticker && data._ticker !== CFG.ticker) {
+        showToast("Wrong ticker: file is for " + data._ticker + ", this is " + CFG.ticker);
+        return;
+      }
+
+      // Restore state
+      if (data.state) {
+        for (var k in data.state) {
+          if (data.state.hasOwnProperty(k)) state[k] = data.state[k];
+        }
+      }
+
+      // Restore lerpMode
+      if (data.lerpMode) {
+        for (var lk in data.lerpMode) {
+          if (data.lerpMode.hasOwnProperty(lk)) lerpMode[lk] = data.lerpMode[lk];
+        }
+      }
+
+      // Restore perYear
+      if (data.perYear) {
+        perYear = {};
+        for (var pk in data.perYear) {
+          if (data.perYear.hasOwnProperty(pk)) perYear[pk] = data.perYear[pk];
+        }
+      }
+
+      updateUI();
+      showToast("Loaded: " + file.name);
+    };
+    reader.readAsText(file);
+  }
+
+  function bindSaveLoad() {
+    var saveBtn = document.getElementById("saveAssumptionsBtn");
+    var loadBtn = document.getElementById("loadAssumptionsBtn");
+    var fileInput = document.getElementById("loadAssumptionsInput");
+
+    if (saveBtn) {
+      saveBtn.addEventListener("click", saveAssumptions);
+    }
+    if (loadBtn && fileInput) {
+      loadBtn.addEventListener("click", function() { fileInput.value = ""; fileInput.click(); });
+      fileInput.addEventListener("change", function() {
+        if (fileInput.files && fileInput.files[0]) {
+          loadAssumptions(fileInput.files[0]);
+        }
+      });
+    }
   }
 
   if (document.readyState === "loading") {

@@ -197,6 +197,25 @@ a, button, input, textarea, select {
   color: var(--color-text);
 }
 
+.header-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.header-btn:hover,
+.header-btn:active {
+  background: var(--color-surface-offset);
+  color: var(--color-text);
+}
+
 /* ===== TAB NAVIGATION ===== */
 .tab-nav {
   display: flex;
