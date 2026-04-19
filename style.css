@@ -1490,6 +1490,84 @@ a, button, input, textarea, select {
   font-style: italic;
 }
 
+/* ===== DECAY CONTROL BAR (income tab) ===== */
+.decay-control-bar {
+  margin-bottom: var(--space-3);
+}
+
+.decay-ctl-inner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border, #2a2a2a);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.02);
+  font-size: var(--text-xs);
+}
+
+.decay-ctl-label {
+  color: var(--color-text-faint);
+  font-weight: 500;
+}
+
+.decay-ctl-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--color-border, #2a2a2a);
+  border-radius: 4px;
+  padding: 2px 6px;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.decay-ctl-input {
+  width: 56px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  padding: 2px 0;
+}
+
+.decay-ctl-suffix {
+  color: var(--color-text-faint);
+  font-size: var(--text-xs);
+}
+
+.decay-ctl-sep {
+  color: var(--color-text-faint);
+}
+
+.decay-ctl-select {
+  background: rgba(0, 0, 0, 0.25);
+  color: inherit;
+  border: 1px solid var(--color-border, #2a2a2a);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: var(--text-xs);
+  outline: none;
+}
+
+.decay-ctl-btn {
+  background: var(--color-accent, #20808D);
+  color: #fff;
+  border: 0;
+  border-radius: 4px;
+  padding: 4px 12px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 150ms ease;
+}
+
+.decay-ctl-btn:hover {
+  filter: brightness(1.1);
+}
+
 /* ===== EDITOR OVERLAY ===== */
 .editor-overlay {
   position: fixed;
