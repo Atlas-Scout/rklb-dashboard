@@ -1957,9 +1957,9 @@
     var el = document.getElementById("sumScenarios");
     if (!el) return;
 
-    var slots = ["base", "bull", "bear"];
-    var slotLabels = { base: "Base", bull: "Bull", bear: "Bear" };
-    var slotColors = { base: "var(--color-primary)", bull: "var(--color-positive)", bear: "var(--color-negative)" };
+    var slots = SLOT_ORDER.slice();
+    var slotLabels = { base: "Target Price", bear: "Floor" };
+    var slotColors = { base: "var(--color-primary)", bear: "var(--color-negative)" };
 
     // Collect available scenarios
     var activeCols = [];
@@ -1967,7 +1967,7 @@
       if (scenResults[slots[si]]) activeCols.push(slots[si]);
     }
     if (activeCols.length === 0) {
-      el.innerHTML = '<div class="sum-no-scen">Save Base, Bull, and Bear scenarios to see comparison</div>';
+      el.innerHTML = '<div class="sum-no-scen">Save Target Price and Floor scenarios to see comparison</div>';
       return;
     }
 
@@ -2363,7 +2363,8 @@
       if (scen.name === currentScenario) continue; // current scenario drawn separately
 
       var scenCaseType = scen.caseType || "base";
-      var scenColor = scenCaseType === "bull" ? colorPositive : scenCaseType === "bear" ? colorNegative : colorMuted;
+      if (scenCaseType !== "base" && scenCaseType !== "bear") continue;
+      var scenColor = scenCaseType === "bear" ? colorNegative : colorMuted;
       var scenTarget = scen.impliedPrice;
       var scenY = yPos(scenTarget);
 
@@ -2676,7 +2677,6 @@
   // ========== SCENARIO COLORS ==========
   var CASE_COLORS = {
     base: { bg: "rgba(32, 128, 141, 0.15)", border: "#20808D", text: "#20808D" },
-    bull: { bg: "rgba(34, 197, 94, 0.12)", border: "#22c55e", text: "#22c55e" },
     bear: { bg: "rgba(239, 68, 68, 0.12)", border: "#ef4444", text: "#ef4444" }
   };
 
@@ -2684,17 +2684,19 @@
     return CASE_COLORS[caseType] || CASE_COLORS.base;
   }
 
-  var SLOT_ORDER = ["base", "bull", "bear"];
+  var SLOT_ORDER = ["base", "bear"];
+
+  var SLOT_LABELS = { base: "Target Price", bear: "Floor" };
 
   // ========== REVENUE DECAY PRESETS ==========
   // Decay factor applied to YoY revenue growth starting after year 2 (FY28+).
   // Each year: growth[i] = growth[i-1] * decayFactor.
   // Configurable per ticker via CFG.decayPresets, otherwise use defaults.
   var DECAY_PRESETS = CFG.decayPresets || {
-    bull: { factor: 0.90, label: "0.90x decay" },
     base: { factor: 0.85, label: "0.85x decay" },
     bear: { factor: 0.80, label: "0.80x decay" }
   };
+  if (DECAY_PRESETS && DECAY_PRESETS.bull) delete DECAY_PRESETS.bull;
 
   /**
    * Apply a revenue growth decay preset for the given scenario slot.
@@ -2739,7 +2741,8 @@
     updateUI();
     saveScenario(slot, slot);
     var startLabel = YEARS[startIdx] || ("Y" + startIdx);
-    showToast(slot.charAt(0).toUpperCase() + slot.slice(1) + ": " + preset.label + " from " + startLabel);
+    var slotLbl = (typeof SLOT_LABELS !== "undefined" && SLOT_LABELS[slot]) ? SLOT_LABELS[slot] : (slot.charAt(0).toUpperCase() + slot.slice(1));
+    showToast(slotLbl + ": " + preset.label + " from " + startLabel);
   }
 
   /**
@@ -2788,7 +2791,7 @@
       }
     }
     if (!baseName) {
-      showToast("Save a Base scenario first");
+      showToast("Save a Target Price scenario first");
       return;
     }
 
@@ -2796,7 +2799,7 @@
     var xhr = new XMLHttpRequest();
     xhr.open("GET", getTickerPath() + "/" + encodeURIComponent(baseName), true);
     xhr.onload = function () {
-      if (xhr.status !== 200) { showToast("Could not load Base"); return; }
+      if (xhr.status !== 200) { showToast("Could not load Target Price"); return; }
       var baseData = JSON.parse(xhr.responseText);
 
       // Save current rev growth state (perYear + lerpMode for testsYoY)
@@ -2835,13 +2838,13 @@
       // Now apply the decay preset for this slot's rev growth
       applyDecayPreset(slot);
     };
-    xhr.onerror = function () { showToast("Error loading Base"); };
+    xhr.onerror = function () { showToast("Error loading Target Price"); };
     xhr.send();
   }
   var defaultScenarioSlot = "base";
   var _openSlotMenu = null; // tracks which slot dropdown is open
 
-  // ========== RENDER SCENARIO BAR — 3 fixed slots ==========
+  // ========== RENDER SCENARIO BAR — 2 fixed slots (Target Price, Floor) ==========
   function renderScenarioBar() {
     var container = document.getElementById("scenarioBar");
     if (!container) return;
@@ -2851,8 +2854,13 @@
     for (var i = 0; i < scenarioCache.length; i++) {
       var sc = scenarioCache[i];
       var ct = sc.caseType || "base";
+      if (ct !== "base" && ct !== "bear") continue;
       if (!slotMap[ct]) slotMap[ct] = sc;
     }
+
+    // Expose target and floor prices on the container for easy extraction
+    container.setAttribute("data-target-price", slotMap.base && slotMap.base.impliedPrice !== undefined ? slotMap.base.impliedPrice : "");
+    container.setAttribute("data-floor-price", slotMap.bear && slotMap.bear.impliedPrice !== undefined ? slotMap.bear.impliedPrice : "");
 
     // Determine which slot is active (currently loaded)
     var activeSlot = "base";
@@ -2870,7 +2878,7 @@
       var colors = getCaseColor(slot);
       var isActive = slot === activeSlot;
       var saved = slotMap[slot];
-      var slotLabel = slot.charAt(0).toUpperCase() + slot.slice(1);
+      var slotLabel = SLOT_LABELS[slot] || (slot.charAt(0).toUpperCase() + slot.slice(1));
       var priceStr = saved && saved.impliedPrice !== undefined ? "$" + Math.round(saved.impliedPrice) : "";
       var isDefault = saved && saved.name === defaultScenarioSlot;
       var isOpen = _openSlotMenu === slot;
@@ -2903,7 +2911,7 @@
         var decayInfo = DECAY_PRESETS[slot];
         if (decayInfo) {
           html += '<button class="sbar-menu-item sbar-menu-decay" data-slot="' + slot + '">Quick setup <span class="sbar-decay-tag">' + decayInfo.label + '</span></button>';
-          html += '<button class="sbar-menu-item sbar-menu-copybase" data-slot="' + slot + '">Copy Base + decay <span class="sbar-decay-tag">' + decayInfo.label + '</span></button>';
+          html += '<button class="sbar-menu-item sbar-menu-copybase" data-slot="' + slot + '">Copy Target + decay <span class="sbar-decay-tag">' + decayInfo.label + '</span></button>';
         }
         html += '<button class="sbar-menu-item sbar-menu-save" data-slot="' + slot + '">Save here</button>';
         html += '<button class="sbar-menu-item sbar-menu-default" data-slot="' + slot + '">Set as default</button>';
@@ -3091,11 +3099,22 @@
     var xhr = new XMLHttpRequest();
     xhr.open("GET", getTickerPath() + "/_default", true);
     xhr.onload = function () {
+      var loaded = false;
       if (xhr.status === 200) {
         var data = JSON.parse(xhr.responseText);
         if (data.name) {
           defaultScenarioSlot = data.name;
           loadScenario(data.name);
+          loaded = true;
+        }
+      }
+      // Fallback: auto-open the base-caseType scenario (Target Price) if no default set
+      if (!loaded) {
+        for (var i = 0; i < scenarioCache.length; i++) {
+          if ((scenarioCache[i].caseType || "base") === "base") {
+            loadScenario(scenarioCache[i].name);
+            break;
+          }
         }
       }
       if (cb) cb();
