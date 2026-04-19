@@ -185,7 +185,7 @@ window.TICKER_CONFIG = {
       label: "SBC % of Rev",
       key26: "sbcPct26", key35: "sbcPct35",
       actualLabel: "11.8%", actualId: "kpiSbcPctA",
-      commentary: "FY25 SBC $71M. Deducted from EBIT in Adj FCF calc. Elevated due to Neutron hiring ramp."
+      commentary: "FY25 SBC $71M. Deducted from EBIT in FCF after SBC calc. Elevated due to Neutron hiring ramp."
     },
     {
       label: "D&A % of Rev",

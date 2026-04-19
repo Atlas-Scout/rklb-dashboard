@@ -120,7 +120,7 @@
       key26: "sbcPct26", key35: "sbcPct35",
       suffix: "%", displayMul: 100, stateMul: 0.01,
       lerpDefault: true,
-      commentary: "Stock-based compensation as % of revenue. Deducted from EBIT in Adj FCF."
+      commentary: "Stock-based compensation as % of revenue. Deducted from EBIT in FCF after SBC."
     },
     daPct: {
       label: "D&A % of Rev",
@@ -573,7 +573,7 @@
         data.revGrowthDecay[i] = null;
       }
 
-      // FCF Pre-SBC: Adj FCF + after-tax SBC add-back
+      // FCF Pre-SBC: FCF after SBC + after-tax SBC add-back
       data.fcfPreSBC[i] = data.ufcf[i] + data.sbc[i] * (1 - data.taxRate[i]);
       data.fcfMarginPreSBC[i] = data.fcfPreSBC[i] / data.revenue[i];
     }
@@ -686,7 +686,7 @@
     var pvEarningsPrice = futurePrice / Math.pow(1 + discountRate, yearsToDiscount);
 
     // Net cash/debt at convergence year:
-    // Start with current balance sheet, accumulate Adj FCF (ufcf) each year
+    // Start with current balance sheet, accumulate FCF after SBC (ufcf) each year
     var futureNetCash = CASH_EQUIVALENTS - DEBT_OUTSTANDING; // starting net cash ($K)
     for (var ci = 1; ci <= convergenceIndex; ci++) {
       futureNetCash += (data.ufcf[ci] || 0);
@@ -799,7 +799,7 @@
     html += '</div>';
     html += '<div class="pe-step">';
     html += '<span class="pe-step-num">3</span>';
-    html += '<span class="pe-step-text">Estimate net cash at convergence (starting balance + cumulative Adj FCF)</span>';
+    html += '<span class="pe-step-text">Estimate net cash at convergence (starting balance + cumulative FCF after SBC)</span>';
     html += '</div>';
     html += '<div class="pe-step">';
     html += '<span class="pe-step-num">4</span>';
@@ -1305,6 +1305,7 @@
 
     updateDCFTabDisplays();
 
+    renderDecayControlBar();
     renderIncomeTable(data);
     renderFCFTable(data);
     renderDCFSummary(data, dcf);
@@ -1337,6 +1338,69 @@
       el.textContent = dispInfo.prefix + displayVal + dispInfo.suffix;
       var isChanged = defaults[key] !== undefined && Math.abs(state[key] - defaults[key]) > 0.001;
       if (isChanged) { el.classList.add("changed"); } else { el.classList.remove("changed"); }
+    }
+  }
+
+  // ========== DECAY CONTROL BAR (income tab) ==========
+  function getActiveSlot() {
+    for (var i = 0; i < scenarioCache.length; i++) {
+      if (scenarioCache[i].name === currentScenario) {
+        return scenarioCache[i].caseType || "base";
+      }
+    }
+    return "base";
+  }
+
+  function renderDecayControlBar() {
+    var container = document.getElementById("decayControlBar");
+    if (!container) return;
+
+    var slot = getActiveSlot();
+    var preset = DECAY_PRESETS[slot] || DECAY_PRESETS.base || { factor: 0.85 };
+    var factor = preset.factor;
+    var startIdx = settings.decayStartYear;
+    if (startIdx < 1) startIdx = 1;
+    if (startIdx > 10) startIdx = 10;
+
+    var slotLabel = (typeof SLOT_LABELS !== "undefined" && SLOT_LABELS[slot]) ? SLOT_LABELS[slot] : (slot.charAt(0).toUpperCase() + slot.slice(1));
+
+    var html = '<div class="decay-ctl-inner">';
+    html += '<span class="decay-ctl-label">Revenue Growth Decay (' + slotLabel + '):</span>';
+    html += '<div class="decay-ctl-field">';
+    html += '<input type="number" class="decay-ctl-input" id="decayFactorInput" step="0.01" min="0.5" max="1.00" value="' + factor.toFixed(2) + '">';
+    html += '<span class="decay-ctl-suffix">x</span>';
+    html += '</div>';
+    html += '<span class="decay-ctl-sep">starting</span>';
+    html += '<select class="decay-ctl-select" id="decayStartYearSelect">';
+    for (var y = 1; y <= 5; y++) {
+      var sel = y === startIdx ? ' selected' : '';
+      html += '<option value="' + y + '"' + sel + '>' + YEARS[y] + '</option>';
+    }
+    html += '</select>';
+    html += '<button class="decay-ctl-btn" id="decayApplyBtn">Set</button>';
+    html += '</div>';
+
+    container.innerHTML = html;
+
+    var btn = document.getElementById("decayApplyBtn");
+    var factorInput = document.getElementById("decayFactorInput");
+    var yearSelect = document.getElementById("decayStartYearSelect");
+    if (btn && factorInput && yearSelect) {
+      btn.addEventListener("click", function () {
+        var f = parseFloat(factorInput.value);
+        var yr = parseInt(yearSelect.value, 10);
+        if (!(f > 0) || f > 1.5) { showToast("Enter a decay factor (e.g. 0.85)"); return; }
+        if (!(yr >= 1 && yr <= 10)) { showToast("Invalid start year"); return; }
+        var activeSlot = getActiveSlot();
+        if (!DECAY_PRESETS[activeSlot]) {
+          DECAY_PRESETS[activeSlot] = { factor: f, label: f.toFixed(2) + "x decay" };
+        } else {
+          DECAY_PRESETS[activeSlot].factor = f;
+          DECAY_PRESETS[activeSlot].label = f.toFixed(2) + "x decay";
+        }
+        settings.decayStartYear = yr;
+        applyDecayPreset(activeSlot);
+      });
     }
   }
 
@@ -1382,8 +1446,8 @@
       { label: "Shares (M)", key: "shares", format: "sharesM", cls: "" },
       { label: "FCF", key: "fcfPreSBC", format: "dollarM", cls: "row-highlight" },
       { label: "FCF Margin", key: "fcfMarginPreSBC", format: "pct", cls: "" },
-      { label: "Adj FCF", key: "ufcf", format: "dollarM", cls: "" },
-      { label: "Adj FCF Margin", key: "fcfMargin", format: "pct", cls: "" }
+      { label: "FCF after SBC", key: "ufcf", format: "dollarM", cls: "" },
+      { label: "FCF after SBC Margin", key: "fcfMargin", format: "pct", cls: "" }
     ];
 
     var bodyHTML = "";
@@ -1514,13 +1578,12 @@
 
     var fcfRows = [
       { label: "EBIT", key: "ebit", format: "dollarM" },
-      { label: "(-) SBC", key: "sbc", format: "dollarM" },
+      { label: "(-) SBC % Rev", key: "sbcPct", format: "pct" },
       { label: "Tax Rate", key: "taxRate", format: "pct" },
-      { label: "(+) D&A", key: "da", format: "dollarM" },
-      { label: "CapEx", key: "capex", format: "dollarM" },
-      { label: "WC Change", key: "wcChange", format: "dollarM" },
-      { label: "Adj FCF", key: "ufcf", format: "dollarM", cls: "row-highlight" },
-      { label: "Adj FCF Margin", key: "fcfMargin", format: "pct" }
+      { label: "(+) D&A % Rev", key: "daPct", format: "pct" },
+      { label: "CapEx % Rev", key: "capexPct", format: "pct" },
+      { label: "FCF after SBC", key: "ufcf", format: "dollarM", cls: "row-highlight" },
+      { label: "FCF after SBC Margin", key: "fcfMargin", format: "pct" }
     ];
 
     var bodyHTML = "";
@@ -1542,7 +1605,7 @@
     if (!container) return;
 
     var rows = [
-      { label: "PV of Forecast Adjusted FCF", value: fmt(dcf.sumPVFCF, "dollarM") },
+      { label: "PV of Forecast FCF after SBC", value: fmt(dcf.sumPVFCF, "dollarM") },
       { label: "PV of Terminal Value", value: fmt(dcf.pvTV, "dollarM") },
       { label: "Enterprise Value", value: fmt(dcf.ev, "dollarM"), divider: true },
       { label: "(-) Debt", value: fmt(-dcf.debt, "dollarM") },
@@ -1560,7 +1623,7 @@
     html += "</div>";
 
     html += "<div class=\"dcf-detail-grid\">";
-    html += "<div class=\"dcf-detail-item\"><span class=\"dcf-detail-label\">Last Adj. FCF (FY35)</span><span class=\"dcf-detail-val\">" + fmt(dcf.lastFCF, "dollarM") + "</span></div>";
+    html += "<div class=\"dcf-detail-item\"><span class=\"dcf-detail-label\">Last FCF after SBC (FY35)</span><span class=\"dcf-detail-val\">" + fmt(dcf.lastFCF, "dollarM") + "</span></div>";
     html += "<div class=\"dcf-detail-item\"><span class=\"dcf-detail-label\">LT Valuation Yield</span><span class=\"dcf-detail-val\">" + (dcf.longTermYield * 100).toFixed(2) + "%</span></div>";
     html += "<div class=\"dcf-detail-item\"><span class=\"dcf-detail-label\">Terminal Value (undiscounted)</span><span class=\"dcf-detail-val\">" + fmt(dcf.terminalFutureValue, "dollarM") + "</span></div>";
     html += "<div class=\"dcf-detail-item\"><span class=\"dcf-detail-label\">Discount Rate</span><span class=\"dcf-detail-val\">" + (dcf.discountRate * 100).toFixed(0) + "%</span></div>";
@@ -1578,7 +1641,7 @@
 
     html += "<div class=\"dcf-footnote\">";
     html += "LT Valuation Yield = ((9.2 - (final yr rev growth% \u00D7 0.56)) / 100) \u00D7 (1 - monopoly premium). ";
-    html += "Terminal value = final yr Adj FCF \u00F7 LT valuation yield. ";
+    html += "Terminal value = final yr FCF after SBC \u00F7 LT valuation yield. ";
     html += "Monopoly premium = 15% if pricing power, 0% otherwise.";
     html += "</div>";
 
@@ -1602,7 +1665,7 @@
     var details = [
       { label: "Discount Rate", value: (dcf.discountRate * 100).toFixed(0) + "%" },
       { label: "LT Valuation Yield", value: (dcf.longTermYield * 100).toFixed(2) + "%" },
-      { label: "Terminal Adj FCF (FY35)", value: fmt(dcf.lastFCF, "dollarM") },
+      { label: "Terminal FCF after SBC (FY35)", value: fmt(dcf.lastFCF, "dollarM") },
       { label: "Terminal Value", value: fmt(dcf.terminalFutureValue, "dollarM") },
       { label: "Monopoly Premium", value: (dcf.monopolyPremium * 100).toFixed(0) + "%" },
       { label: "Shares (FY26)", value: (dcf.sharesForPrice / 1000).toFixed(0) + "M" }
@@ -1616,7 +1679,7 @@
     html += "</div>";
 
     var bridgeRows = [
-      { label: "PV of Forecast Adj FCF", value: fmt(dcf.sumPVFCF, "dollarM") },
+      { label: "PV of Forecast FCF after SBC", value: fmt(dcf.sumPVFCF, "dollarM") },
       { label: "PV of Terminal Value", value: fmt(dcf.pvTV, "dollarM") },
       { label: "Enterprise Value", value: fmt(dcf.ev, "dollarM"), divider: true },
       { label: "(-) Debt", value: fmt(-dcf.debt, "dollarM") },
@@ -1643,7 +1706,7 @@
     // Update multiples note with current price
     var noteEl = document.getElementById("multiplesNote");
     if (noteEl) {
-      noteEl.textContent = "Based on current share price of $" + CURRENT_PRICE.toFixed(2) + " held constant across all years. FCF = before SBC; Adj FCF = after SBC deduction.";
+      noteEl.textContent = "Based on current share price of $" + CURRENT_PRICE.toFixed(2) + " held constant across all years. FCF = before SBC; FCF after SBC = after SBC deduction.";
     }
     var table = document.getElementById("multiplesTable");
     if (!table) return;
@@ -1715,8 +1778,8 @@
       { label: "EV / EBIT", data: evEbit, format: "multiple", cls: "row-separator" },
       { label: "Price / FCF", data: pFcf, format: "multiple", cls: "" },
       { label: "FCF Yield", data: fcfYield, format: "pct", cls: "row-separator" },
-      { label: "Price / Adj FCF", data: pAdjFcf, format: "multiple", cls: "row-highlight" },
-      { label: "Adj FCF Yield", data: adjFcfYield, format: "pct", cls: "row-highlight" }
+      { label: "Price / FCF after SBC", data: pAdjFcf, format: "multiple", cls: "row-highlight" },
+      { label: "FCF after SBC Yield", data: adjFcfYield, format: "pct", cls: "row-highlight" }
     ];
 
     var bodyHTML = "";
