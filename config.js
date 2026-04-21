@@ -14,8 +14,17 @@ window.TICKER_CONFIG = {
     cogs: 394618,
     grossProfit: 207181,
     grossMargin: 0.344,
-    rd: 270716,
-    sga: 165303,
+    // Cash OpEx breakout (GAAP line items minus SBC allocated to each)
+    // Reported GAAP FY25: R&D $270.7M (SBC $22.1M), SGA $165.3M (SBC $31.4M).
+    // SBC in opex = $53.5M (total SBC $71.1M incl. ~$17.6M allocated to COGS).
+    // Cash R&D = $248.6M (41.3%), Cash SGA = $133.9M (22.3%), opex SBC = $53.5M (8.9%).
+    // Other = reconciler plug to tie to reported total opex $436.0M.
+    rd: 270716,         // legacy GAAP R&D (kept for back-compat / display)
+    sga: 165303,        // legacy GAAP SGA (kept for back-compat / display)
+    cashRd: 248644,     // GAAP R&D ex-SBC
+    cashSga: 133909,    // GAAP SGA ex-SBC
+    otherNonCash: 0,    // plug: reported opex ties exactly with opex-SBC allocated
+
     opIncome: -228838,
     otherIncome: 2941,
     tax: -27688,
@@ -23,7 +32,7 @@ window.TICKER_CONFIG = {
     shares: 530665,
     eps: -0.37,
     da: 43935,
-    sbc: 71099,
+    sbc: 53466,         // OpEx SBC only (excludes ~$17.6M COGS SBC, already in GAAP GM)
     capex: -156285,
     wcChange: -58777,
     // Revenue driver: tests = revenue in $K, asp = $1
@@ -105,15 +114,17 @@ window.TICKER_CONFIG = {
     asp35: 1,
     gm26: 1,
     gm35: 1,
-    opex26: 1,
-    opex35: 1,
     discountRate: 1,
     recurringRevPct: 5,
     taxRate: 1,
     rdPct26: 1,
     rdPct35: 1,
+    sgaPct26: 1,
+    sgaPct35: 1,
     sbcPct26: 0.5,
     sbcPct35: 0.5,
+    otherNonCashPct26: 0.5,
+    otherNonCashPct35: 0.5,
     daPct26: 0.5,
     daPct35: 0.5,
     capexPct26: 1,
@@ -130,15 +141,17 @@ window.TICKER_CONFIG = {
     asp35: { min: 1, max: 1 },
     gm26: { min: 28, max: 50 },
     gm35: { min: 35, max: 60 },
-    opex26: { min: 30, max: 60 },
-    opex35: { min: 12, max: 30 },
     discountRate: { min: 6, max: 18 },
     recurringRevPct: { min: 0, max: 100 },
     taxRate: { min: 15, max: 28 },
     rdPct26: { min: 15, max: 45 },
     rdPct35: { min: 5, max: 15 },
+    sgaPct26: { min: 10, max: 30 },
+    sgaPct35: { min: 5, max: 18 },
     sbcPct26: { min: 5, max: 18 },
     sbcPct35: { min: 2, max: 8 },
+    otherNonCashPct26: { min: 0, max: 5 },
+    otherNonCashPct35: { min: 0, max: 5 },
     daPct26: { min: 4, max: 12 },
     daPct35: { min: 2, max: 6 },
     capexPct26: { min: 8, max: 28 },
@@ -155,16 +168,18 @@ window.TICKER_CONFIG = {
     asp35: 1,
     gm26: 37,
     gm35: 50,
-    opex26: 42,
-    opex35: 18,
     discountRate: 10,
     hasPricingPower: false,
     recurringRevPct: 60,
     taxRate: 21,
-    rdPct26: 28,
+    rdPct26: 28,        // Cash R&D FY25 = 41.3%. Declines fast as Neutron moves to production.
     rdPct35: 8,
-    sbcPct26: 9,
+    sgaPct26: 20,       // Cash SGA FY25 = 22.3%. Lerp to 10% at scale.
+    sgaPct35: 10,
+    sbcPct26: 9,        // OpEx SBC FY25 = 8.9%. Elevated from Neutron hiring.
     sbcPct35: 3,
+    otherNonCashPct26: 0,  // Reconciler; starts at 0 since opex SBC is fully allocated.
+    otherNonCashPct35: 0,
     daPct26: 6,
     daPct35: 3,
     capexPct26: 16,
@@ -176,16 +191,22 @@ window.TICKER_CONFIG = {
   // ========== COMPANY KPI TABLE ROWS ==========
   companyKpiRows: [
     {
-      label: "R&D % of Rev",
+      label: "Cash R&D % Rev",
       key26: "rdPct26", key35: "rdPct35",
-      actualLabel: "45.0%", actualId: "kpiRdPctA",
-      commentary: "FY25 R&D $271M (45% rev). Neutron dev dominant driver. \"Q1 to mark peak Neutron R&D spending.\" Shift to Flight 2 inventory in 2026. Drops significantly as Neutron enters production."
+      actualLabel: "41.3%", actualId: "kpiRdPctA",
+      commentary: "FY25 Cash R&D $248.6M (41.3% rev, ex-SBC). Neutron dev dominant driver. \"Q1 to mark peak Neutron R&D spending.\" Shift to Flight 2 inventory in 2026."
+    },
+    {
+      label: "Cash SG&A % Rev",
+      key26: "sgaPct26", key35: "sgaPct35",
+      actualLabel: "22.3%", actualId: "kpiSgaPctA",
+      commentary: "FY25 Cash SGA $133.9M (22.3% rev, ex-SBC). Trending down as % rev. Operating leverage expected as Neutron transitions to production."
     },
     {
       label: "SBC % of Rev",
       key26: "sbcPct26", key35: "sbcPct35",
-      actualLabel: "11.8%", actualId: "kpiSbcPctA",
-      commentary: "FY25 SBC $71M. Deducted from EBIT in FCF after SBC calc. Elevated due to Neutron hiring ramp."
+      actualLabel: "8.9%", actualId: "kpiSbcPctA",
+      commentary: "FY25 OpEx SBC $53.5M (8.9% rev, excludes COGS SBC in GAAP GM). Total cash flow SBC $71M. Elevated from Neutron hiring."
     },
     {
       label: "D&A % of Rev",
@@ -209,7 +230,8 @@ window.TICKER_CONFIG = {
 
   // ========== COMPANY KPI OUTPUT TABLE ROWS ==========
   companyKpiOutputRows: [
-    { label: "R&D", key: "rd", format: "dollarM" },
+    { label: "Cash R&D", key: "rd", format: "dollarM" },
+    { label: "Cash SG&A", key: "sga", format: "dollarM" },
     { label: "SBC", key: "sbc", format: "dollarM" },
     { label: "D&A", key: "da", format: "dollarM" },
     { label: "CapEx", key: "capex", format: "dollarM" },
@@ -230,9 +252,24 @@ window.TICKER_CONFIG = {
       commentary: "Q4'25 GAAP GM 38%, non-GAAP 44%. FY25 GAAP GM 34.4% (+780bp YoY). \"Slight dip in Q1 to 34-36% GAAP\" from space systems mix. Electron margin expanding with cadence. Neutron will start low, ramp over several years."
     },
     {
-      label: "OpEx % of Rev", key26: "opex26", key35: "opex35",
+      label: "Cash R&D % Rev", key26: "rdPct26", key35: "rdPct35",
       suffix26: "%", prefix26: "", suffix35: "%", prefix35: "",
-      commentary: "FY25 total opex 72% of rev. Neutron R&D peaked Q1'26 per Adam Spice. \"Shift from R&D into Flight 2 inventory throughout 2026.\" SG&A trending down as % rev. Expect significant operating leverage as Neutron transitions to production."
+      commentary: "Cash R&D ex-SBC. FY25 $248.6M (41.3%). Neutron dev dominant; shifting to Flight 2 inventory in 2026."
+    },
+    {
+      label: "Cash SG&A % Rev", key26: "sgaPct26", key35: "sgaPct35",
+      suffix26: "%", prefix26: "", suffix35: "%", prefix35: "",
+      commentary: "Cash SGA ex-SBC. FY25 $133.9M (22.3%). Trending down as % rev. Significant operating leverage as Neutron transitions to production."
+    },
+    {
+      label: "SBC % of Rev", key26: "sbcPct26", key35: "sbcPct35",
+      suffix26: "%", prefix26: "", suffix35: "%", prefix35: "",
+      commentary: "FY25 OpEx SBC $53.5M (8.9%). Deducted from EBIT in Adj FCF. Elevated from Neutron hiring."
+    },
+    {
+      label: "Other % Rev", key26: "otherNonCashPct26", key35: "otherNonCashPct35",
+      suffix26: "%", prefix26: "", suffix35: "%", prefix35: "",
+      commentary: "Reconciliation plug: reported OpEx minus (Cash R&D + Cash SGA + SBC). FY25 ties to zero."
     },
     {
       label: "LT Tax Rate", key26: null, key35: "taxRate",
@@ -242,17 +279,52 @@ window.TICKER_CONFIG = {
     }
   ],
 
-  // ========== CATALYSTS ==========
-  catalysts: [
-    { name: "Neutron First Flight", timeline: "Q4 2026", description: "\"Neutron's first launch is now targeted for Q4 2026.\" Stage 1 tank in production on AFP machine. Thrust structure, Hungry Hippo fairing, interstage all qualified. Archimedes engines in extensive \"boot camp\" testing." },
-    { name: "SDA Tranche 3 Revenue Ramp", timeline: "2026-2029", description: "\"$816M contract for 18 spacecraft with advanced missile tracking sensors. Largest single contract in Rocket Lab's history.\" ~10% rev rec in first 12mo, 40%/40%/10% over next 3 years." },
-    { name: "Golden Dome Participation", timeline: "2026+", description: "\"Multiple fronts... launch, satellites, optical terminals, optical payloads.\" Selected by MDA for Shield program ($151B contract ceiling). HASTE hypersonic testing supports program." },
-    { name: "Mynaric Acquisition", timeline: "Pending", description: "German regulatory review ongoing. \"Don't believe everything you read in the media.\" Would add optical terminal manufacturing to vertical integration." },
-    { name: "Mars Telecom Network", timeline: "2027+", description: "NASA RFP for Mars telecommunications network (~$700-750M). \"Rocket Lab has more hardware on and orbiting Mars than just about any other company today.\" ESCAPADE mission success strengthens position." },
-    { name: "Space Data Centers", timeline: "Long-term", description: "\"Companies are beginning to seriously explore moving data centers to orbit.\" Rocket Lab introducing space-optimized silicon solar arrays for gigawatt-class power at kilometer scale." },
-    { name: "HASTE/Hypersonics Growth", timeline: "2026", description: "\"HASTE mission on the pad, days away from launch.\" Only credible provider for rapid hypersonic testing. Critical for Golden Dome. 3 HASTE missions in FY25, pipeline growing." },
-    { name: "Electron 20%+ Launch Growth", timeline: "2026", description: "\"Nominally 20% growth\" in launch business (excl Neutron). FY25: 21 launches, booked 30+ new missions. Build rate now every 11-13 days." }
-  ],
+  // ========== LONG-TERM MODELING NOTES ==========
+  modelingNotes: {
+    lastUpdated: "Apr 12, 2026",
+    sections: [
+      {
+        title: "Revenue Guidance & Targets",
+        notes: [
+          "FY2025 actual: $601.8M (+38% YoY)",
+          "Q1 2026 guidance: $185M–$200M",
+          "Backlog: $1.85B (+73% YoY), ~37% converts within 12 months (~$685M)",
+          "Analyst consensus: ~$852M in 2026, ~$1.2B in 2027, ~$1.55B in 2028"
+        ]
+      },
+      {
+        title: "Margin Targets",
+        notes: [
+          "FY2025 GAAP gross margin: peaked at record 38% in Q4",
+          "FY2025 non-GAAP gross margin: 44.3% in Q4",
+          "Q1 2026 guided GAAP gross margin: 34–36%",
+          "Operating margin still negative (~-33% GAAP in 2025) due to Neutron R&D",
+          "Adj. EBITDA loss Q1 2026: -$21M to -$27M",
+          "Profitability expected once Neutron R&D spend moderates post-first launch"
+        ]
+      },
+      {
+        title: "Key Operating Metrics",
+        notes: [
+          "Neutron first launch targeted Q4 2026 (delayed from Q1 2026)",
+          "Neutron target price: ~$55M per launch with 40–50% gross margins long-term",
+          "Electron launch cadence: 20%+ growth expected near-to-intermediate term",
+          "Revenue split: ~40% Launch, ~60% Space Systems",
+          "Space Systems is higher-margin recurring component manufacturing (Kuiper, defense)",
+          "76.3% 4-year revenue CAGR from IPO"
+        ]
+      },
+      {
+        title: "Modeling Considerations",
+        notes: [
+          "Pre-profit; model needs to account for heavy Neutron development spend through 2026",
+          "Profitability inflection likely 2027–2028 as Neutron generates revenue",
+          "Bear case: $1.5B revenue by 2030 at 8% net margin; Bull case: $6B at 15% net margin",
+          "Gross margin expansion driven by Electron fixed-cost absorption at higher cadence"
+        ]
+      }
+    ]
+  },
 
   // ========== BUSINESS ATTRIBUTES ==========
   pricingPowerNote: "Rocket Lab is the only proven small launch provider globally. No successful new US/EU small launch vehicle in 2025. If enabled, applies 15% monopoly premium to terminal valuation yield.",

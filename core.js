@@ -72,14 +72,21 @@
   var currentScenario = "base";
   var scenarioCache = []; // [{name, impliedPrice, caseType}]
 
-  // Settings (not saved in scenarios)
+  // Settings (not saved in scenarios, except ASP CAGRs + SS driver which are persisted with scenarios)
   var settings = {
     dcfBaseYear: 2,  // index into YEARS array: 2 = FY27E (default)
-    decayStartYear: 2, // index into YEARS: 2 = FY27E (default). Decay applies from this year onward.
     peGrowthThreshold: 8, // % revenue growth that triggers P/E convergence (default 8)
     peMultiple: 20,       // P/E multiple applied at convergence (default 20x)
     valuationMode: "blended", // "blended" (avg DCF+PE), "dcf" (DCF only), "pe" (PE only)
-    revenueDriverMode: "decay" // "decay" (growth rate decay) or "buildup" (detailed segment buildup from Revenue tab)
+    revenueDriverMode: "buildup", // RKLB uses buildup as the definitive revenue source
+    electronAspCagr: 0, // % CAGR applied to Electron ASP when "Apply" clicked
+    neutronAspCagr: 0,  // % CAGR applied to Neutron ASP when "Apply" clicked
+    // Space Systems revenue driver: "yoy" = SS grows by YoY% (default, derived from ssGrowthPct);
+    // "pct" = SS is set as a share of total revenue, per year (uses ssPctOverrides).
+    ssDriverMode: "yoy",
+    // When ssDriverMode === "pct", this supplies the SS share of total per projection year.
+    // Indexed 0..9 matching _revBuildupProjState. Fractions (e.g. 0.60 = 60%).
+    ssPctOverrides: null
   };
 
   // ========== EDITABLE METRICS CONFIG ==========
@@ -98,13 +105,21 @@
       lerpDefault: true,
       commentary: "Gross margin from FY26 to FY35. Interpolates between endpoints."
     },
-    opexPct: {
-      label: "OpEx % of Rev",
-      statePrefix: "opex",
-      key26: "opex26", key35: "opex35",
+    sgaPct: {
+      label: "Cash SG&A % of Rev",
+      statePrefix: "sga",
+      key26: "sgaPct26", key35: "sgaPct35",
       suffix: "%", displayMul: 100, stateMul: 0.01,
       lerpDefault: true,
-      commentary: "Total operating expenses as % of revenue."
+      commentary: "Cash selling, general & admin as % of revenue (combined S&M + G&A, excludes SBC)."
+    },
+    otherNonCashPct: {
+      label: "Other OpEx % of Rev",
+      statePrefix: "otherNonCash",
+      key26: "otherNonCashPct26", key35: "otherNonCashPct35",
+      suffix: "%", displayMul: 100, stateMul: 0.01,
+      lerpDefault: true,
+      commentary: "Other non-cash/reconciling OpEx as % of revenue (D&A in OpEx, impairments, etc.)."
     },
     rdPct: {
       label: "R&D % of Rev",
@@ -186,6 +201,104 @@
   // Per-year override values: perYear[metricKey] = [null, val1, val2, ..., val10]
   // Index 0 = actuals (always null), indices 1-10 = FY26-FY35
   var perYear = {};
+
+  // ========== BUILDUP EDITABLE ROWS (RKLB-specific) ==========
+  // lerp: launch counts / ASPs default to interpolate between FY26 and FY35 endpoints.
+  var BUILDUP_EDITABLE = CFG.revenueBuildup ? {
+    electronLaunches: { label: "Electron Launches", editKey: "electronLaunches", inc: 1, min: 0, max: 50, suffix: "", format: "integer", lerp: true, lerpDefault: true, integer: true },
+    electronASP: { label: "Electron Rev/Launch ($K)", editKey: "electronASP", inc: 200, min: 5000, max: 20000, suffix: "", format: "aspM", lerp: true, lerpDefault: true },
+    neutronLaunches: { label: "Neutron Launches", editKey: "neutronLaunches", inc: 1, min: 0, max: 60, suffix: "", format: "integer", lerp: true, lerpDefault: true, integer: true },
+    neutronASP: { label: "Neutron Rev/Launch ($K)", editKey: "neutronASP", inc: 1000, min: 0, max: 100000, suffix: "", format: "aspM", lerp: true, lerpDefault: true },
+    ssGrowthPct: { label: "SS YoY Growth %", editKey: "ssGrowthPct", inc: 1, min: -10, max: 60, suffix: "%", format: "pctRaw" },
+    ssPctOfTotal: { label: "SS % of Total Rev", editKey: "ssPctOfTotal", inc: 1, min: 0, max: 95, suffix: "%", format: "pct", isSsPct: true, lerp: true, lerpDefault: true }
+  } : null;
+
+  // Seed lerpMode defaults for buildup rows that support interpolation.
+  if (BUILDUP_EDITABLE) {
+    for (var bmk in BUILDUP_EDITABLE) {
+      if (BUILDUP_EDITABLE.hasOwnProperty(bmk) && BUILDUP_EDITABLE[bmk].lerp && lerpMode[bmk] === undefined) {
+        lerpMode[bmk] = BUILDUP_EDITABLE[bmk].lerpDefault;
+      }
+    }
+  }
+
+  // Recompute projState[1..8].editKey as a linear interpolation between projState[0] (FY26E)
+  // and projState[9] (FY35E). Integer metrics are rounded to whole numbers.
+  function applyBuildupLerp(editKey, opts) {
+    var ps = window._revBuildupProjState;
+    if (!ps || ps.length < 2) return;
+    var isInt = !!(opts && opts.integer);
+    var v0 = ps[0][editKey];
+    var vN = ps[ps.length - 1][editKey];
+    for (var i = 1; i < ps.length - 1; i++) {
+      var t = i / (ps.length - 1);
+      var v = v0 + (vN - v0) * t;
+      ps[i][editKey] = isInt ? Math.round(v) : Math.round(v);
+    }
+  }
+
+  // Recompute settings.ssPctOverrides[1..8] as a linear interpolation between
+  // [0] (FY26E) and [9] (FY35E). Values are stored as fractions (0..0.95).
+  function applySsPctLerp() {
+    if (!settings.ssPctOverrides || settings.ssPctOverrides.length !== 10) {
+      settings.ssPctOverrides = seedSsPctOverridesFromYoY();
+    }
+    var arr = settings.ssPctOverrides;
+    var v0 = arr[0];
+    var vN = arr[arr.length - 1];
+    if (v0 === null || v0 === undefined || isNaN(v0)) v0 = 0.5;
+    if (vN === null || vN === undefined || isNaN(vN)) vN = 0.5;
+    for (var i = 1; i < arr.length - 1; i++) {
+      var t = i / (arr.length - 1);
+      arr[i] = v0 + (vN - v0) * t;
+    }
+  }
+
+  // Recompute all lerp-enabled buildup rows whose lerpMode is currently on.
+  function recomputeBuildupLerps() {
+    if (!BUILDUP_EDITABLE) return;
+    for (var bk in BUILDUP_EDITABLE) {
+      if (!BUILDUP_EDITABLE.hasOwnProperty(bk)) continue;
+      var bd = BUILDUP_EDITABLE[bk];
+      if (bd.lerp && lerpMode[bk] !== false) {
+        if (bd.isSsPct) {
+          applySsPctLerp();
+        } else {
+          applyBuildupLerp(bd.editKey, { integer: !!bd.integer });
+        }
+      }
+    }
+  }
+
+  // Return the SS share override (fraction) for a given projection index.
+  // Lazily seeds defaults from the current launch+growth projection so the first
+  // time the user switches to "pct" mode the numbers are reasonable.
+  function getSsPctOverride(projIdx) {
+    if (!settings.ssPctOverrides || settings.ssPctOverrides.length !== 10) {
+      settings.ssPctOverrides = seedSsPctOverridesFromYoY();
+    }
+    var v = settings.ssPctOverrides[projIdx];
+    if (v === null || v === undefined || isNaN(v)) return 0.5;
+    return Math.max(0, Math.min(0.95, v));
+  }
+
+  function seedSsPctOverridesFromYoY() {
+    var rb = CFG.revenueBuildup;
+    if (!rb) return new Array(10);
+    var ps = window._revBuildupProjState;
+    var prevSS = rb.actual.spaceSystemsRevenue;
+    var out = new Array(10);
+    for (var i = 0; i < 10; i++) {
+      var p = (ps && ps[i]) ? ps[i] : rb.projections[i];
+      var eRev = p.electronLaunches * p.electronASP;
+      var nRev = p.neutronLaunches * p.neutronASP;
+      var ssRev = prevSS * (1 + p.ssGrowthPct / 100);
+      var total = eRev + nRev + ssRev;
+      out[i] = total > 0 ? ssRev / total : 0.5;
+      prevSS = ssRev;
+    }
+    return out;
+  }
 
   // ========== HELPERS ==========
   function fmt(val, type) {
@@ -381,6 +494,9 @@
       rd: new Array(YEAR_COUNT),
       rdPct: new Array(YEAR_COUNT),
       sga: new Array(YEAR_COUNT),
+      sgaPct: new Array(YEAR_COUNT),
+      otherNonCash: new Array(YEAR_COUNT),
+      otherNonCashPct: new Array(YEAR_COUNT),
       totalOpEx: new Array(YEAR_COUNT),
       opexPct: new Array(YEAR_COUNT),
       opIncome: new Array(YEAR_COUNT),
@@ -406,9 +522,18 @@
       testsYoY: new Array(YEAR_COUNT),
       aspYoY: new Array(YEAR_COUNT),
       consensusRevenue: new Array(YEAR_COUNT),
-      revGrowthDecay: new Array(YEAR_COUNT),
       fcfPreSBC: new Array(YEAR_COUNT),
-      fcfMarginPreSBC: new Array(YEAR_COUNT)
+      fcfMarginPreSBC: new Array(YEAR_COUNT),
+      electronLaunches: new Array(YEAR_COUNT),
+      electronASP: new Array(YEAR_COUNT),
+      electronRev: new Array(YEAR_COUNT),
+      neutronLaunches: new Array(YEAR_COUNT),
+      neutronASP: new Array(YEAR_COUNT),
+      neutronRev: new Array(YEAR_COUNT),
+      ssRev: new Array(YEAR_COUNT),
+      ssGrowthPct: new Array(YEAR_COUNT),
+      ssPctOfTotal: new Array(YEAR_COUNT),
+      buildupTotal: new Array(YEAR_COUNT)
     };
 
     // Actuals (index 0)
@@ -419,11 +544,19 @@
     data.cogs[0] = ACTUALS.cogs;
     data.grossProfit[0] = ACTUALS.grossProfit;
     data.grossMargin[0] = ACTUALS.grossMargin;
-    data.rd[0] = ACTUALS.rd;
-    data.rdPct[0] = ACTUALS.rd / ACTUALS.revenue;
-    data.sga[0] = ACTUALS.sga;
-    data.totalOpEx[0] = ACTUALS.rd + ACTUALS.sga;
-    data.opexPct[0] = (ACTUALS.rd + ACTUALS.sga) / ACTUALS.revenue;
+    var actCashRd = (ACTUALS.cashRd !== undefined && ACTUALS.cashRd !== null) ? ACTUALS.cashRd : ACTUALS.rd;
+    var actCashSga = (ACTUALS.cashSga !== undefined && ACTUALS.cashSga !== null) ? ACTUALS.cashSga : ACTUALS.sga;
+    var actSbc = ACTUALS.sbc || 0;
+    var actOtherNonCash = (ACTUALS.otherNonCash !== undefined && ACTUALS.otherNonCash !== null) ? ACTUALS.otherNonCash : 0;
+    var actTotalOpEx = actCashRd + actCashSga + actSbc + actOtherNonCash;
+    data.rd[0] = actCashRd;
+    data.rdPct[0] = actCashRd / ACTUALS.revenue;
+    data.sga[0] = actCashSga;
+    data.sgaPct[0] = actCashSga / ACTUALS.revenue;
+    data.otherNonCash[0] = actOtherNonCash;
+    data.otherNonCashPct[0] = actOtherNonCash / ACTUALS.revenue;
+    data.totalOpEx[0] = actTotalOpEx;
+    data.opexPct[0] = actTotalOpEx / ACTUALS.revenue;
     data.opIncome[0] = ACTUALS.opIncome;
     data.opMargin[0] = ACTUALS.opIncome / ACTUALS.revenue;
     data.otherIncome[0] = ACTUALS.otherIncome;
@@ -447,7 +580,6 @@
     data.testsYoY[0] = null;
     data.aspYoY[0] = null;
     data.consensusRevenue[0] = (CFG.consensusRevenue && CFG.consensusRevenue[0]) ? CFG.consensusRevenue[0] : null;
-    data.revGrowthDecay[0] = null;
     data.fcfPreSBC[0] = null;
     data.fcfMarginPreSBC[0] = null;
 
@@ -481,9 +613,9 @@
 
       data.revenue[i] = data.tests[i] * data.asp[i];
 
-      // Revenue Buildup Override: when in "buildup" mode, override revenue
-      // from the detailed segment build (Electron + Neutron + Space Systems)
-      if (settings.revenueDriverMode === "buildup" && window._revBuildupTotals && window._revBuildupTotals[i]) {
+      // RKLB: revenue is always driven by the buildup (Electron + Neutron + Space Systems).
+      // The buildup total is the definitive revenue figure and feeds all downstream calcs.
+      if (window._revBuildupTotals && window._revBuildupTotals[i]) {
         data.revenue[i] = window._revBuildupTotals[i];
         data.tests[i] = data.revenue[i]; // keep tests in sync (since asp = 1)
       }
@@ -496,16 +628,29 @@
       data.cogs[i] = data.revenue[i] * (1 - data.grossMargin[i]);
       data.grossProfit[i] = data.revenue[i] - data.cogs[i];
 
-      // ---- OpEx ----
-      var opexVal = getVal("opexPct", i);
-      data.opexPct[i] = opexVal / 100;
-      data.totalOpEx[i] = data.revenue[i] * data.opexPct[i];
-
-      // ---- R&D ----
+      // ---- Cash R&D ----
       var rdVal = getVal("rdPct", i);
       data.rdPct[i] = rdVal / 100;
       data.rd[i] = data.revenue[i] * data.rdPct[i];
-      data.sga[i] = data.totalOpEx[i] - data.rd[i];
+
+      // ---- Cash SG&A ----
+      var sgaVal = getVal("sgaPct", i);
+      data.sgaPct[i] = sgaVal / 100;
+      data.sga[i] = data.revenue[i] * data.sgaPct[i];
+
+      // ---- SBC (included in OpEx) ----
+      var sbcVal = getVal("sbcPct", i);
+      data.sbcPct[i] = sbcVal / 100;
+      data.sbc[i] = data.revenue[i] * data.sbcPct[i];
+
+      // ---- Other OpEx (reconciliation plug) ----
+      var otherVal = getVal("otherNonCashPct", i);
+      data.otherNonCashPct[i] = otherVal / 100;
+      data.otherNonCash[i] = data.revenue[i] * data.otherNonCashPct[i];
+
+      // ---- Total OpEx = Cash R&D + Cash SG&A + SBC + Other ----
+      data.totalOpEx[i] = data.rd[i] + data.sga[i] + data.sbc[i] + data.otherNonCash[i];
+      data.opexPct[i] = data.totalOpEx[i] / data.revenue[i];
 
       data.opIncome[i] = data.grossProfit[i] - data.totalOpEx[i];
       data.opMargin[i] = data.opIncome[i] / data.revenue[i];
@@ -543,11 +688,7 @@
       var daVal = getVal("daPct", i);
       data.daPct[i] = daVal / 100;
       data.da[i] = data.revenue[i] * data.daPct[i];
-
-      // ---- SBC ----
-      var sbcVal = getVal("sbcPct", i);
-      data.sbcPct[i] = sbcVal / 100;
-      data.sbc[i] = data.revenue[i] * data.sbcPct[i];
+      // SBC already computed above in OpEx breakout.
 
       // ---- CapEx ----
       var capexVal = getVal("capexPct", i);
@@ -566,16 +707,83 @@
       data.aspYoY[i] = (data.asp[i] / data.asp[i - 1]) - 1;
       data.consensusRevenue[i] = (CFG.consensusRevenue && CFG.consensusRevenue[i]) ? CFG.consensusRevenue[i] : null;
 
-      // Rev Growth Decay: revYoY[i] / revYoY[i-1] (only if both are positive)
-      if (i >= 2 && data.revYoY[i] > 0 && data.revYoY[i - 1] > 0) {
-        data.revGrowthDecay[i] = data.revYoY[i] / data.revYoY[i - 1];
-      } else {
-        data.revGrowthDecay[i] = null;
-      }
-
       // FCF Pre-SBC: FCF after SBC + after-tax SBC add-back
       data.fcfPreSBC[i] = data.ufcf[i] + data.sbc[i] * (1 - data.taxRate[i]);
       data.fcfMarginPreSBC[i] = data.fcfPreSBC[i] / data.revenue[i];
+    }
+
+    // ========== REVENUE BUILDUP SEGMENT DATA (RKLB-specific) ==========
+    if (CFG.revenueBuildup) {
+      var rb = CFG.revenueBuildup;
+      var rbd = window._revBuildupData; // from Revenue Tab if available
+      var ps = window._revBuildupProjState; // editable state shared with Revenue Tab
+      var ssMode = settings.ssDriverMode || "yoy";
+
+      // Index 0 = FY25A (actuals)
+      if (rbd && rbd[0]) {
+        data.electronLaunches[0] = rbd[0].electronLaunches;
+        data.electronASP[0] = rbd[0].electronASP;
+        data.electronRev[0] = rbd[0].electronRev;
+        data.neutronLaunches[0] = rbd[0].neutronLaunches;
+        data.neutronASP[0] = rbd[0].neutronASP;
+        data.neutronRev[0] = rbd[0].neutronRev;
+        data.ssRev[0] = rbd[0].ssRev;
+        data.buildupTotal[0] = rbd[0].totalRev;
+      } else {
+        var act = rb.actual;
+        data.electronLaunches[0] = act.electronLaunches;
+        data.electronASP[0] = act.electronASP;
+        data.electronRev[0] = act.electronRevenue;
+        data.neutronLaunches[0] = act.neutronLaunches;
+        data.neutronASP[0] = act.neutronASP;
+        data.neutronRev[0] = act.neutronRevenue;
+        data.ssRev[0] = act.spaceSystemsRevenue;
+        data.buildupTotal[0] = act.totalRevenue;
+      }
+      data.ssGrowthPct[0] = null;
+      data.ssPctOfTotal[0] = data.buildupTotal[0] ? data.ssRev[0] / data.buildupTotal[0] : null;
+
+      // Indices 1-10 = FY26E-FY35E projections
+      var prevSS = data.ssRev[0];
+      for (var ri = 1; ri <= 10; ri++) {
+        var projIdx = ri - 1; // 0-based into rb.projections
+        var rbdIdx = ri;      // _revBuildupData uses same indexing as data (0 = actual, 1..10 = estimates)
+        var proj = (ps && ps[projIdx]) ? ps[projIdx] : rb.projections[projIdx];
+
+        // Launch segments are always driven by launches × ASP
+        data.electronLaunches[ri] = proj.electronLaunches;
+        data.electronASP[ri] = proj.electronASP;
+        data.electronRev[ri] = proj.electronLaunches * proj.electronASP;
+        data.neutronLaunches[ri] = proj.neutronLaunches;
+        data.neutronASP[ri] = proj.neutronASP;
+        data.neutronRev[ri] = proj.neutronLaunches * proj.neutronASP;
+
+        if (ssMode === "pct") {
+          // Space Systems driven by % of total revenue. Total = launch / (1 - ssPct)
+          // avoids the circular dep: SS depends on Total, Total includes SS.
+          var ssPct = getSsPctOverride(projIdx);
+          var launchRev = data.electronRev[ri] + data.neutronRev[ri];
+          var denom = 1 - ssPct;
+          if (denom <= 0.01) denom = 0.01; // guard against 100% share
+          var total = launchRev / denom;
+          var ssR = total * ssPct;
+          data.ssRev[ri] = Math.round(ssR);
+          data.buildupTotal[ri] = Math.round(total);
+          data.ssGrowthPct[ri] = prevSS ? ((data.ssRev[ri] / prevSS) - 1) * 100 : null;
+        } else if (rbd && rbd[rbdIdx]) {
+          // YoY mode — if Revenue tab already computed buildupData, use it
+          data.ssRev[ri] = rbd[rbdIdx].ssRev;
+          data.buildupTotal[ri] = rbd[rbdIdx].totalRev;
+          data.ssGrowthPct[ri] = proj.ssGrowthPct;
+        } else {
+          // YoY mode, no precomputed buildup — derive here
+          data.ssGrowthPct[ri] = proj.ssGrowthPct;
+          data.ssRev[ri] = Math.round(prevSS * (1 + proj.ssGrowthPct / 100));
+          data.buildupTotal[ri] = data.electronRev[ri] + data.neutronRev[ri] + data.ssRev[ri];
+        }
+        prevSS = data.ssRev[ri];
+        data.ssPctOfTotal[ri] = data.buildupTotal[ri] ? data.ssRev[ri] / data.buildupTotal[ri] : null;
+      }
     }
 
     return data;
@@ -908,6 +1116,27 @@
   function getEditableInfo(rowKey, yearIndex) {
     if (yearIndex === 0) return null; // actuals not editable
 
+    // Check buildup editable rows first (RKLB-specific)
+    if (BUILDUP_EDITABLE && BUILDUP_EDITABLE[rowKey]) {
+      // SS growth/pct rows gate on ssDriverMode
+      var ssMode = settings.ssDriverMode || "yoy";
+      if (rowKey === "ssGrowthPct" && ssMode !== "yoy") return null;
+      if (rowKey === "ssPctOfTotal" && ssMode !== "pct") return null;
+      // For lerp-enabled buildup rows, only FY26 (year 1) and FY35 (year 10) are editable
+      // when lerp mode is ON. Intermediate years are auto-interpolated.
+      var bcfg = BUILDUP_EDITABLE[rowKey];
+      if (bcfg.lerp && lerpMode[rowKey] !== false && yearIndex !== 1 && yearIndex !== 10) {
+        return null;
+      }
+      return {
+        isBuildupEdit: true,
+        buildupConfig: bcfg,
+        metricKey: rowKey,
+        yearIndex: yearIndex,
+        projIdx: yearIndex - 1
+      };
+    }
+
     var metric = EDITABLE_METRICS[rowKey];
     if (!metric) return null;
 
@@ -992,6 +1221,47 @@
     if (!sheet || !overlay) return;
 
     activeEditor = info;
+
+    // Buildup edit: separate path — reads from _revBuildupProjState
+    if (info.isBuildupEdit) {
+      var bc = info.buildupConfig;
+      var currentValB;
+      if (bc.isSsPct) {
+        // Stored as a fraction; edited as percentage
+        currentValB = roundPrecision(getSsPctOverride(info.projIdx) * 100, bc.inc || 1);
+      } else {
+        var projState = window._revBuildupProjState;
+        if (projState && projState[info.projIdx]) {
+          currentValB = projState[info.projIdx][bc.editKey];
+        } else {
+          currentValB = CFG.revenueBuildup.projections[info.projIdx][bc.editKey];
+        }
+      }
+
+      setText("editorMetricName", bc.label);
+      setText("editorYearLabel", YEARS[info.yearIndex]);
+      setText("editorCommentary", bc.isSsPct ? "Share of total revenue attributable to Space Systems. Total Rev = (Electron + Neutron) / (1 \u2212 SS%)." : "");
+      var hintElB = document.getElementById("editorHint");
+      if (hintElB) hintElB.style.display = "none";
+
+      var inputB = document.getElementById("editorInput");
+      if (inputB) {
+        inputB.value = currentValB;
+        inputB.setAttribute("min", bc.min);
+        inputB.setAttribute("max", bc.max);
+        inputB.setAttribute("step", bc.inc);
+      }
+
+      setText("editorPrefix", "");
+      setText("editorSuffix", bc.suffix || "");
+
+      updateEditorChanged();
+      overlay.classList.add("visible");
+      sheet.classList.add("visible");
+      document.body.classList.add("editor-open");
+      setTimeout(function () { if (inputB) inputB.select(); }, 200);
+      return;
+    }
 
     var metric = info.metric;
     var yearLabel = YEARS[info.yearIndex];
@@ -1102,6 +1372,36 @@
 
     var inc, bound;
 
+    if (activeEditor.isBuildupEdit) {
+      var bcA = activeEditor.buildupConfig;
+      newVal = Math.max(bcA.min, Math.min(bcA.max, newVal));
+      if (bcA.isSsPct) {
+        if (!settings.ssPctOverrides || settings.ssPctOverrides.length !== 10) {
+          settings.ssPctOverrides = seedSsPctOverridesFromYoY();
+        }
+        settings.ssPctOverrides[activeEditor.projIdx] = newVal / 100;
+        // If lerp mode is on for this SS pct row, re-interpolate intermediate years.
+        if (bcA.lerp && lerpMode[activeEditor.metricKey] !== false) {
+          applySsPctLerp();
+        }
+      } else {
+        var projStateA = window._revBuildupProjState;
+        if (projStateA && projStateA[activeEditor.projIdx]) {
+          projStateA[activeEditor.projIdx][bcA.editKey] = newVal;
+          // If lerp mode is on for this buildup metric, re-interpolate intermediate years.
+          if (bcA.lerp && lerpMode[activeEditor.metricKey] !== false) {
+            applyBuildupLerp(bcA.editKey, { integer: !!bcA.integer });
+          }
+        }
+      }
+      var inputA = document.getElementById("editorInput");
+      if (inputA) inputA.value = newVal;
+      if (window._revTabRefresh) window._revTabRefresh();
+      updateEditorChanged();
+      updateUI();
+      return;
+    }
+
     if (activeEditor.isPerYear) {
       inc = getIncrementForMetric(activeEditor.metricKey, activeEditor.yearIndex);
       bound = getBoundsForMetric(activeEditor.metricKey, activeEditor.yearIndex);
@@ -1147,6 +1447,19 @@
     var inc;
     var currentVal;
 
+    if (activeEditor.isBuildupEdit) {
+      var bcI = activeEditor.buildupConfig;
+      var curI;
+      if (bcI.isSsPct) {
+        curI = getSsPctOverride(activeEditor.projIdx) * 100;
+      } else {
+        var psI = window._revBuildupProjState;
+        curI = (psI && psI[activeEditor.projIdx]) ? psI[activeEditor.projIdx][bcI.editKey] : CFG.revenueBuildup.projections[activeEditor.projIdx][bcI.editKey];
+      }
+      applyEditorValue(curI + (dir * bcI.inc));
+      return;
+    }
+
     if (activeEditor.isPerYear) {
       inc = getIncrementForMetric(activeEditor.metricKey, activeEditor.yearIndex) || 1;
       currentVal = perYear[activeEditor.metricKey] ? perYear[activeEditor.metricKey][activeEditor.yearIndex] : 0;
@@ -1168,6 +1481,24 @@
   function updateEditorChanged() {
     if (!activeEditor) return;
     var isChanged = false;
+
+    if (activeEditor.isBuildupEdit) {
+      var bcC = activeEditor.buildupConfig;
+      if (bcC.isSsPct) {
+        // SS% is considered "changed" any time the override exists — there's no
+        // single config default to compare against (default is derived from YoY).
+        isChanged = !!(settings.ssPctOverrides && settings.ssPctOverrides[activeEditor.projIdx] !== undefined && settings.ssPctOverrides[activeEditor.projIdx] !== null);
+      } else {
+        var psC = window._revBuildupProjState;
+        var defProj = CFG.revenueBuildup.projections[activeEditor.projIdx];
+        if (psC && psC[activeEditor.projIdx] && defProj) {
+          isChanged = psC[activeEditor.projIdx][bcC.editKey] !== defProj[bcC.editKey];
+        }
+      }
+      var indicator0 = document.getElementById("editorChangedDot");
+      if (indicator0) indicator0.style.display = isChanged ? "" : "none";
+      return;
+    }
 
     if (activeEditor.isPerYear) {
       // Check if this per-year value differs from the lerp default
@@ -1191,6 +1522,31 @@
   //   Toggle OFF (to manual): snapshot current interpolated values into perYear,
   //     keep everything as-is and make all years editable.
   function toggleLerpMode(metricKey) {
+    // Buildup rows (Electron/Neutron launches & ASPs, SS % of Total) use their own lerp path.
+    if (BUILDUP_EDITABLE && BUILDUP_EDITABLE[metricKey] && BUILDUP_EDITABLE[metricKey].lerp) {
+      var bcfgT = BUILDUP_EDITABLE[metricKey];
+      var wasBuildupLerp = lerpMode[metricKey] !== false;
+      if (wasBuildupLerp) {
+        // Turning OFF: keep current values, just allow per-year editing.
+        lerpMode[metricKey] = false;
+      } else {
+        // Turning ON: re-interpolate from current year 1 & year 10 endpoints.
+        lerpMode[metricKey] = true;
+        if (bcfgT.isSsPct) {
+          if (!settings.ssPctOverrides || settings.ssPctOverrides.length !== 10) {
+            settings.ssPctOverrides = seedSsPctOverridesFromYoY();
+          }
+          applySsPctLerp();
+        } else {
+          applyBuildupLerp(bcfgT.editKey, { integer: !!bcfgT.integer });
+        }
+      }
+      closeEditor();
+      if (window._revTabRefresh) window._revTabRefresh();
+      updateUI();
+      return;
+    }
+
     var metric = EDITABLE_METRICS[metricKey];
     var wasLerp = lerpMode[metricKey] !== false;
 
@@ -1305,7 +1661,7 @@
 
     updateDCFTabDisplays();
 
-    renderDecayControlBar();
+    renderAspInflationBar();
     renderIncomeTable(data);
     renderFCFTable(data);
     renderDCFSummary(data, dcf);
@@ -1341,67 +1697,72 @@
     }
   }
 
-  // ========== DECAY CONTROL BAR (income tab) ==========
-  function getActiveSlot() {
-    for (var i = 0; i < scenarioCache.length; i++) {
-      if (scenarioCache[i].name === currentScenario) {
-        return scenarioCache[i].caseType || "base";
-      }
-    }
-    return "base";
-  }
-
-  function renderDecayControlBar() {
-    var container = document.getElementById("decayControlBar");
+  // ========== ASP INFLATION CONTROL BAR (income tab) ==========
+  // Lets the user apply a CAGR to Electron and Neutron ASPs. When "Apply" is
+  // clicked, the current FY26 ASPs are projected forward using the specified
+  // CAGR (FY27 = FY26 * (1+r), FY28 = FY27 * (1+r), etc.).
+  function renderAspInflationBar() {
+    var container = document.getElementById("aspInflationBar");
     if (!container) return;
 
-    var slot = getActiveSlot();
-    var preset = DECAY_PRESETS[slot] || DECAY_PRESETS.base || { factor: 0.85 };
-    var factor = preset.factor;
-    var startIdx = settings.decayStartYear;
-    if (startIdx < 1) startIdx = 1;
-    if (startIdx > 10) startIdx = 10;
-
-    var slotLabel = (typeof SLOT_LABELS !== "undefined" && SLOT_LABELS[slot]) ? SLOT_LABELS[slot] : (slot.charAt(0).toUpperCase() + slot.slice(1));
+    var eCagr = settings.electronAspCagr || 0;
+    var nCagr = settings.neutronAspCagr || 0;
 
     var html = '<div class="decay-ctl-inner">';
-    html += '<span class="decay-ctl-label">Revenue Growth Decay (' + slotLabel + '):</span>';
+    html += '<span class="decay-ctl-label">ASP Inflation:</span>';
     html += '<div class="decay-ctl-field">';
-    html += '<input type="number" class="decay-ctl-input" id="decayFactorInput" step="0.01" min="0.5" max="1.00" value="' + factor.toFixed(2) + '">';
-    html += '<span class="decay-ctl-suffix">x</span>';
+    html += '<span class="decay-ctl-sep">Electron</span>';
+    html += '<input type="number" class="decay-ctl-input" id="electronAspCagrInput" step="0.5" min="-20" max="20" value="' + eCagr + '">';
+    html += '<span class="decay-ctl-suffix">% CAGR</span>';
     html += '</div>';
-    html += '<span class="decay-ctl-sep">starting</span>';
-    html += '<select class="decay-ctl-select" id="decayStartYearSelect">';
-    for (var y = 1; y <= 5; y++) {
-      var sel = y === startIdx ? ' selected' : '';
-      html += '<option value="' + y + '"' + sel + '>' + YEARS[y] + '</option>';
-    }
-    html += '</select>';
-    html += '<button class="decay-ctl-btn" id="decayApplyBtn">Set</button>';
+    html += '<div class="decay-ctl-field">';
+    html += '<span class="decay-ctl-sep">Neutron</span>';
+    html += '<input type="number" class="decay-ctl-input" id="neutronAspCagrInput" step="0.5" min="-20" max="20" value="' + nCagr + '">';
+    html += '<span class="decay-ctl-suffix">% CAGR</span>';
+    html += '</div>';
+    html += '<button class="decay-ctl-btn" id="aspInflationApplyBtn">Apply</button>';
     html += '</div>';
 
     container.innerHTML = html;
 
-    var btn = document.getElementById("decayApplyBtn");
-    var factorInput = document.getElementById("decayFactorInput");
-    var yearSelect = document.getElementById("decayStartYearSelect");
-    if (btn && factorInput && yearSelect) {
+    var btn = document.getElementById("aspInflationApplyBtn");
+    var eInput = document.getElementById("electronAspCagrInput");
+    var nInput = document.getElementById("neutronAspCagrInput");
+    if (btn && eInput && nInput) {
       btn.addEventListener("click", function () {
-        var f = parseFloat(factorInput.value);
-        var yr = parseInt(yearSelect.value, 10);
-        if (!(f > 0) || f > 1.5) { showToast("Enter a decay factor (e.g. 0.85)"); return; }
-        if (!(yr >= 1 && yr <= 10)) { showToast("Invalid start year"); return; }
-        var activeSlot = getActiveSlot();
-        if (!DECAY_PRESETS[activeSlot]) {
-          DECAY_PRESETS[activeSlot] = { factor: f, label: f.toFixed(2) + "x decay" };
-        } else {
-          DECAY_PRESETS[activeSlot].factor = f;
-          DECAY_PRESETS[activeSlot].label = f.toFixed(2) + "x decay";
-        }
-        settings.decayStartYear = yr;
-        applyDecayPreset(activeSlot);
+        var eC = parseFloat(eInput.value);
+        var nC = parseFloat(nInput.value);
+        if (isNaN(eC)) eC = 0;
+        if (isNaN(nC)) nC = 0;
+        settings.electronAspCagr = eC;
+        settings.neutronAspCagr = nC;
+        applyAspInflation();
       });
     }
+  }
+
+  // Project ASPs forward from FY26 using the configured CAGRs.
+  // Mutates window._revBuildupProjState so the Revenue tab and income table
+  // pick up the new values.
+  function applyAspInflation() {
+    var ps = window._revBuildupProjState;
+    if (!ps || !ps.length) { showToast("Revenue tab not ready"); return; }
+    var eR = 1 + (settings.electronAspCagr || 0) / 100;
+    var nR = 1 + (settings.neutronAspCagr || 0) / 100;
+
+    // projState index 0 = FY26E. Keep FY26 as-is, project from FY27 onward.
+    for (var i = 1; i < ps.length; i++) {
+      ps[i].electronASP = Math.round(ps[i - 1].electronASP * eR);
+      ps[i].neutronASP = Math.round(ps[i - 1].neutronASP * nR);
+    }
+    // ASP inflation produces a geometric series; turn off linear lerp for ASPs so the
+    // intermediate years aren't immediately overwritten by interpolation.
+    lerpMode.electronASP = false;
+    lerpMode.neutronASP = false;
+
+    if (window._revTabRefresh) window._revTabRefresh();
+    updateUI();
+    showToast("ASP inflation applied: Electron " + (settings.electronAspCagr || 0) + "% / Neutron " + (settings.neutronAspCagr || 0) + "%");
   }
 
   // ========== INCOME STATEMENT TABLE (with editable cells + lerp toggles) ==========
@@ -1420,19 +1781,30 @@
     thead.innerHTML = headerHTML;
 
     var rows = [
-      { label: "Revenue Drivers", section: true },
-      { label: RD_VOL_LABEL, key: "tests", format: "testsK", cls: "", hideIf: false },
-      { label: RD_VOL_YOY, key: "testsYoY", format: "pct", cls: "", hideIf: false },
-      { label: RD_ASP_LABEL, key: "asp", format: "dollar", cls: "", hideIf: RD_HIDE_ASP },
-      { label: RD_ASP_YOY, key: "aspYoY", format: "pct", cls: "", hideIf: RD_HIDE_ASP },
-      { label: (settings.revenueDriverMode === "buildup" && CFG.revenueBuildup) ? "Revenue \u25C0" : "Revenue", key: "revenue", format: "dollarM", cls: "row-revenue" },
+      { label: "Revenue Buildup", section: true, hideIf: !CFG.revenueBuildup },
+      { label: "  Electron Launches", key: "electronLaunches", format: "integer", cls: "row-segment-sub", hideIf: !CFG.revenueBuildup },
+      { label: "  Electron Rev/Launch", key: "electronASP", format: "aspM", cls: "row-segment-sub", hideIf: !CFG.revenueBuildup },
+      { label: "Electron Revenue", key: "electronRev", format: "dollarM", cls: "row-segment", hideIf: !CFG.revenueBuildup },
+      { label: "  Neutron Launches", key: "neutronLaunches", format: "integer", cls: "row-segment-sub", hideIf: !CFG.revenueBuildup },
+      { label: "  Neutron Rev/Launch", key: "neutronASP", format: "aspM", cls: "row-segment-sub", hideIf: !CFG.revenueBuildup },
+      { label: "Neutron Revenue", key: "neutronRev", format: "dollarM", cls: "row-segment", hideIf: !CFG.revenueBuildup },
+      { label: "Space Systems Rev", key: "ssRev", format: "dollarM", cls: "row-segment", hideIf: !CFG.revenueBuildup },
+      { label: "  SS % of Total Rev", key: "ssPctOfTotal", format: "pct", cls: "row-segment-sub", hideIf: !CFG.revenueBuildup, hasSsModeToggle: true },
+      { label: "  SS YoY Growth %", key: "ssGrowthPct", format: "pctRaw", cls: "row-segment-sub", hideIf: !CFG.revenueBuildup },
+      { label: "Revenue", key: "buildupTotal", format: "dollarM", cls: "row-revenue", hideIf: !CFG.revenueBuildup },
       { label: "Consensus Rev", key: "consensusRevenue", format: "dollarM", cls: "row-consensus" },
-      { label: "Rev YoY %", key: "revYoY", format: "pct", cls: "" },
-      { label: "Rev Growth Decay", key: "revGrowthDecay", format: "decayX", cls: "row-decay" },
       { label: "Profitability", section: true },
       { label: "Gross Margin", key: "grossMargin", format: "pct", cls: "" },
       { label: "Gross Profit", key: "grossProfit", format: "dollarM", cls: "" },
-      { label: "R&D % Rev", key: "rdPct", format: "pct", cls: "" },
+      { label: "Cash R&D % Rev", key: "rdPct", format: "pct", cls: "" },
+      { label: "Cash R&D", key: "rd", format: "dollarM", cls: "" },
+      { label: "Cash SG&A % Rev", key: "sgaPct", format: "pct", cls: "" },
+      { label: "Cash SG&A", key: "sga", format: "dollarM", cls: "" },
+      { label: "SBC % Rev", key: "sbcPct", format: "pct", cls: "" },
+      { label: "SBC", key: "sbc", format: "dollarM", cls: "" },
+      { label: "Other OpEx % Rev", key: "otherNonCashPct", format: "pct", cls: "" },
+      { label: "Other OpEx", key: "otherNonCash", format: "dollarM", cls: "" },
+      { label: "Total OpEx", key: "totalOpEx", format: "dollarM", cls: "" },
       { label: "OpEx % Rev", key: "opexPct", format: "pct", cls: "" },
       { label: "Op Income", key: "opIncome", format: "dollarM", cls: "row-highlight" },
       { label: "Op Margin", key: "opMargin", format: "pct", cls: "" },
@@ -1440,7 +1812,6 @@
       { label: "Net Income", key: "netIncome", format: "dollarM", cls: "row-highlight" },
       { label: "EPS", key: "eps", format: "eps", cls: "" },
       { label: "Cash Flow & Capital", section: true },
-      { label: "SBC % Rev", key: "sbcPct", format: "pct", cls: "" },
       { label: "D&A % Rev", key: "daPct", format: "pct", cls: "" },
       { label: "CapEx % Rev", key: "capexPct", format: "pct", cls: "" },
       { label: "Shares (M)", key: "shares", format: "sharesM", cls: "" },
@@ -1465,13 +1836,45 @@
         continue;
       }
 
-      // Check if this row has a lerp toggle
-      var hasLerpToggle = EDITABLE_METRICS.hasOwnProperty(row.key);
+      // Check if this row has a lerp toggle (standard metric OR lerp-enabled buildup row)
+      var hasLerpToggle = EDITABLE_METRICS.hasOwnProperty(row.key)
+        || (BUILDUP_EDITABLE && BUILDUP_EDITABLE[row.key] && BUILDUP_EDITABLE[row.key].lerp);
       var isLerpOn = hasLerpToggle && lerpMode[row.key] !== false;
 
       // Build row label cell with optional toggle
       var labelHTML;
-      if (hasLerpToggle) {
+      if (row.hasSsModeToggle) {
+        var ssModeOn = (settings.ssDriverMode || "yoy") === "pct";
+        var ssToggleTitle = ssModeOn
+          ? "SS driven by % of total revenue \u2014 click to switch to YoY growth"
+          : "SS driven by YoY growth \u2014 click to switch to % of total revenue";
+        labelHTML = "<td class=\"td-label-with-toggle\">"
+          + "<span class=\"row-label-text\">" + row.label + "</span>"
+          + "<button class=\"lerp-toggle" + (ssModeOn ? " on" : "") + "\" data-ss-mode-toggle=\"1\" "
+          + "title=\"" + ssToggleTitle + "\" "
+          + "aria-label=\"Toggle Space Systems driver mode\" "
+          + "aria-pressed=\"" + (ssModeOn ? "true" : "false") + "\">"
+          + "<svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\">"
+          + (ssModeOn
+            ? "<path d=\"M4 12h16\"/><circle cx=\"4\" cy=\"12\" r=\"2.5\" fill=\"currentColor\"/><circle cx=\"20\" cy=\"12\" r=\"2.5\" fill=\"currentColor\"/>"
+            : "<rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\"/><path d=\"M6 12h2M10 12h2M14 12h2M18 12h2\"/>")
+          + "</svg>"
+          + "</button>";
+        // When SS is driven by % of total and the row supports lerp, also show the lerp toggle.
+        if (ssModeOn && hasLerpToggle) {
+          var ssLerpCls = isLerpOn ? "lerp-toggle on" : "lerp-toggle";
+          labelHTML += "<button class=\"" + ssLerpCls + "\" data-lerp-metric=\"" + row.key + "\" "
+            + "title=\"" + (isLerpOn ? "Interpolation on \u2014 click to edit each year" : "Manual mode \u2014 click to interpolate") + "\" "
+            + "aria-label=\"Toggle interpolation for " + row.label + "\">"
+            + "<svg width=\"12\" height=\"12\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.5\">"
+            + (isLerpOn
+              ? "<path d=\"M4 12h16\"/><circle cx=\"4\" cy=\"12\" r=\"2.5\" fill=\"currentColor\"/><circle cx=\"20\" cy=\"12\" r=\"2.5\" fill=\"currentColor\"/>"
+              : "<rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\"/><path d=\"M6 12h2M10 12h2M14 12h2M18 12h2\"/>")
+            + "</svg>"
+            + "</button>";
+        }
+        labelHTML += "</td>";
+      } else if (hasLerpToggle) {
         var toggleCls = isLerpOn ? "lerp-toggle on" : "lerp-toggle";
         labelHTML = "<td class=\"td-label-with-toggle\">"
           + "<span class=\"row-label-text\">" + row.label + "</span>"
@@ -1495,7 +1898,7 @@
         var val = data[row.key][j];
         var cellCls = j === 0 ? "col-actual" : "";
 
-        if (row.format === "pct" && val !== null && val !== undefined) {
+        if ((row.format === "pct" || row.format === "pctRaw") && val !== null && val !== undefined) {
           if (val > 0) cellCls += " val-positive";
           else if (val < 0) cellCls += " val-negative";
         }
@@ -1509,7 +1912,14 @@
         if (editInfo) {
           cellCls += " cell-editable";
           // Mark changed
-          if (editInfo.isPerYear) {
+          if (editInfo.isBuildupEdit) {
+            var bbc = editInfo.buildupConfig;
+            var bps = window._revBuildupProjState;
+            var bdef = CFG.revenueBuildup.projections[editInfo.projIdx];
+            if (bps && bps[editInfo.projIdx] && bdef && bps[editInfo.projIdx][bbc.editKey] !== bdef[bbc.editKey]) {
+              cellCls += " cell-changed";
+            }
+          } else if (editInfo.isPerYear) {
             cellCls += " cell-manual";
           } else {
             var isk = editInfo.stateKey;
@@ -1536,6 +1946,29 @@
     for (var lb = 0; lb < lerpBtns.length; lb++) {
       lerpBtns[lb].addEventListener("click", handleLerpToggle);
     }
+
+    // Bind SS driver-mode toggle
+    var ssToggleBtns = tbody.querySelectorAll("[data-ss-mode-toggle]");
+    for (var sb = 0; sb < ssToggleBtns.length; sb++) {
+      ssToggleBtns[sb].addEventListener("click", handleSsModeToggle);
+    }
+  }
+
+  function handleSsModeToggle(e) {
+    e.stopPropagation();
+    var nextMode = (settings.ssDriverMode || "yoy") === "pct" ? "yoy" : "pct";
+    if (nextMode === "pct" && (!settings.ssPctOverrides || settings.ssPctOverrides.length !== 10)) {
+      settings.ssPctOverrides = seedSsPctOverridesFromYoY();
+    }
+    settings.ssDriverMode = nextMode;
+    // When switching into pct mode, honor lerp mode for the SS % row.
+    if (nextMode === "pct" && BUILDUP_EDITABLE && BUILDUP_EDITABLE.ssPctOfTotal
+        && BUILDUP_EDITABLE.ssPctOfTotal.lerp && lerpMode.ssPctOfTotal !== false) {
+      applySsPctLerp();
+    }
+    if (window._revTabRefresh) window._revTabRefresh();
+    updateUI();
+    showToast(nextMode === "pct" ? "Space Systems: % of total revenue mode" : "Space Systems: YoY growth mode");
   }
 
   function fmtCell(val, format) {
@@ -1544,6 +1977,9 @@
       case "testsK": return Math.round(val).toLocaleString("en-US");
       case "sharesM": return (val / 1000).toFixed(1) + "M";
       case "decayX": return val.toFixed(2) + "x";
+      case "integer": return val === 0 ? "\u2014" : Math.round(val).toLocaleString("en-US");
+      case "aspM": return val === 0 ? "\u2014" : "$" + (val / 1000).toFixed(1) + "M";
+      case "pctRaw": return val.toFixed(1) + "%";
       default: return fmt(val, format);
     }
   }
@@ -2624,6 +3060,16 @@
         scenarioData._perYear[pk] = perYear[pk].slice();
       }
     }
+    // Save revenue buildup projState (RKLB-specific)
+    if (window._revBuildupProjState) {
+      scenarioData._revBuildupProjState = JSON.parse(JSON.stringify(window._revBuildupProjState));
+    }
+    // Save ASP inflation CAGRs (RKLB-specific)
+    scenarioData._electronAspCagr = settings.electronAspCagr || 0;
+    scenarioData._neutronAspCagr = settings.neutronAspCagr || 0;
+    // Save Space Systems driver mode + per-year % overrides (RKLB-specific)
+    scenarioData._ssDriverMode = settings.ssDriverMode || "yoy";
+    scenarioData._ssPctOverrides = settings.ssPctOverrides ? settings.ssPctOverrides.slice() : null;
 
     // Compute and store implied price (blended) for scenario visualization
     var modelData = runModel();
@@ -2677,6 +3123,41 @@
             }
           }
           delete scenarioData._perYear;
+        }
+
+        // Restore ASP inflation CAGRs (RKLB-specific)
+        if (scenarioData._electronAspCagr !== undefined) {
+          settings.electronAspCagr = scenarioData._electronAspCagr;
+          delete scenarioData._electronAspCagr;
+        }
+        if (scenarioData._neutronAspCagr !== undefined) {
+          settings.neutronAspCagr = scenarioData._neutronAspCagr;
+          delete scenarioData._neutronAspCagr;
+        }
+
+        // Restore Space Systems driver mode + per-year % overrides (RKLB-specific)
+        if (scenarioData._ssDriverMode !== undefined) {
+          settings.ssDriverMode = scenarioData._ssDriverMode;
+          delete scenarioData._ssDriverMode;
+        }
+        if (scenarioData._ssPctOverrides !== undefined) {
+          settings.ssPctOverrides = scenarioData._ssPctOverrides ? scenarioData._ssPctOverrides.slice() : null;
+          delete scenarioData._ssPctOverrides;
+        }
+
+        // Restore revenue buildup projState (RKLB-specific)
+        if (scenarioData._revBuildupProjState && window._revBuildupProjState) {
+          var savedProj = scenarioData._revBuildupProjState;
+          for (var bi = 0; bi < window._revBuildupProjState.length && bi < savedProj.length; bi++) {
+            var savedP = savedProj[bi];
+            for (var bk in savedP) {
+              if (savedP.hasOwnProperty(bk)) {
+                window._revBuildupProjState[bi][bk] = savedP[bk];
+              }
+            }
+          }
+          if (window._revTabRefresh) window._revTabRefresh();
+          delete scenarioData._revBuildupProjState;
         }
 
         for (var key in scenarioData) {
@@ -2751,159 +3232,6 @@
 
   var SLOT_LABELS = { base: "Target Price", bear: "Floor" };
 
-  // ========== REVENUE DECAY PRESETS ==========
-  // Decay factor applied to YoY revenue growth starting after year 2 (FY28+).
-  // Each year: growth[i] = growth[i-1] * decayFactor.
-  // Configurable per ticker via CFG.decayPresets, otherwise use defaults.
-  var DECAY_PRESETS = CFG.decayPresets || {
-    base: { factor: 0.85, label: "0.85x decay" },
-    bear: { factor: 0.80, label: "0.80x decay" }
-  };
-  if (DECAY_PRESETS && DECAY_PRESETS.bull) delete DECAY_PRESETS.bull;
-
-  /**
-   * Apply a revenue growth decay preset for the given scenario slot.
-   * Anchor year is set by settings.decayStartYear (default FY27, index 2).
-   * Years before the anchor keep their current values. Anchor onward decays.
-   * Switches testsYoY to manual mode, populates perYear, saves as scenario.
-   */
-  function applyDecayPreset(slot) {
-    var preset = DECAY_PRESETS[slot];
-    if (!preset) return;
-
-    var startIdx = settings.decayStartYear; // e.g. 2 = FY27
-    if (startIdx < 1) startIdx = 1;
-    if (startIdx > 10) startIdx = 10;
-
-    // Read existing per-year values (or compute from lerp) to preserve pre-anchor years
-    var currentArr = getEffectivePerYear("testsYoY");
-
-    // Build the trajectory: keep years before startIdx, decay from startIdx onward
-    var arr = [null]; // index 0 = actuals
-    for (var i = 1; i <= 10; i++) {
-      if (i < startIdx) {
-        // Keep existing value
-        arr.push(currentArr[i] !== null && currentArr[i] !== undefined ? roundPrecision(currentArr[i], 0.1) : 0);
-      } else if (i === startIdx) {
-        // Anchor: use the value at startIdx as-is (user sets this)
-        arr.push(currentArr[i] !== null && currentArr[i] !== undefined ? roundPrecision(currentArr[i], 0.1) : roundPrecision(state.volGrowth, 0.1));
-      } else {
-        // Decay from previous year
-        var prev = arr[i - 1];
-        var decayed = roundPrecision(prev * preset.factor, 0.1);
-        if (decayed < 0) decayed = 0;
-        arr.push(decayed);
-      }
-    }
-
-    // Apply: switch testsYoY to manual mode and set the trajectory
-    lerpMode.testsYoY = false;
-    perYear.testsYoY = arr;
-
-    // Update UI immediately, then save as this slot's scenario
-    updateUI();
-    saveScenario(slot, slot);
-    var startLabel = YEARS[startIdx] || ("Y" + startIdx);
-    var slotLbl = (typeof SLOT_LABELS !== "undefined" && SLOT_LABELS[slot]) ? SLOT_LABELS[slot] : (slot.charAt(0).toUpperCase() + slot.slice(1));
-    showToast(slotLbl + ": " + preset.label + " from " + startLabel);
-  }
-
-  /**
-   * Get the effective per-year array for a metric (from perYear if manual, or compute from lerp).
-   * Returns array of length 11 (index 0 = null for actuals).
-   */
-  function getEffectivePerYear(metricKey) {
-    var arr = [null];
-    if (!lerpMode[metricKey] && perYear[metricKey]) {
-      // Manual mode — use stored values
-      for (var i = 1; i <= 10; i++) {
-        arr.push(perYear[metricKey][i] !== undefined ? perYear[metricKey][i] : 0);
-      }
-    } else {
-      // Lerp mode — compute interpolated values
-      var metric = null;
-      for (var m = 0; m < EDITABLE_METRICS.length; m++) {
-        if (EDITABLE_METRICS[m].key === metricKey) { metric = EDITABLE_METRICS[m]; break; }
-      }
-      if (metric && metric.key26 && metric.key35) {
-        var v26 = state[metric.key26];
-        var v35 = state[metric.key35];
-        for (var j = 1; j <= 10; j++) {
-          var t = (j - 1) / 9;
-          arr.push(v26 + (v35 - v26) * t);
-        }
-      } else {
-        for (var k = 1; k <= 10; k++) arr.push(0);
-      }
-    }
-    return arr;
-  }
-
-  /**
-   * Copy Base scenario assumptions into the target slot, EXCEPT revenue growth.
-   * Then apply the slot's decay preset to revenue growth.
-   * Useful for quick scenario setup: same margins/opex as base, different rev trajectory.
-   */
-  function copyBaseKeepRevGrowth(slot) {
-    // Find base scenario in cache
-    var baseName = null;
-    for (var i = 0; i < scenarioCache.length; i++) {
-      if ((scenarioCache[i].caseType || "base") === "base") {
-        baseName = scenarioCache[i].name;
-        break;
-      }
-    }
-    if (!baseName) {
-      showToast("Save a Target Price scenario first");
-      return;
-    }
-
-    // Load base scenario JSON, apply everything except rev growth, then apply decay
-    var xhr = new XMLHttpRequest();
-    xhr.open("GET", getTickerPath() + "/" + encodeURIComponent(baseName), true);
-    xhr.onload = function () {
-      if (xhr.status !== 200) { showToast("Could not load Target Price"); return; }
-      var baseData = JSON.parse(xhr.responseText);
-
-      // Save current rev growth state (perYear + lerpMode for testsYoY)
-      var savedRevLerp = lerpMode.testsYoY;
-      var savedRevPerYear = perYear.testsYoY ? perYear.testsYoY.slice() : null;
-      var savedVolGrowth = state.volGrowth;
-      var savedVolGrowth35 = state.volGrowth35;
-
-      // Apply base scenario state (all keys)
-      if (baseData._lerpMode) {
-        for (var lk in baseData._lerpMode) {
-          if (baseData._lerpMode.hasOwnProperty(lk)) lerpMode[lk] = baseData._lerpMode[lk];
-        }
-      }
-      if (baseData._perYear) {
-        for (var pk in baseData._perYear) {
-          if (baseData._perYear.hasOwnProperty(pk)) perYear[pk] = baseData._perYear[pk];
-        }
-      }
-      for (var key in baseData) {
-        if (baseData.hasOwnProperty(key) && state.hasOwnProperty(key)) {
-          state[key] = baseData[key];
-        }
-      }
-
-      // Restore revenue growth state
-      state.volGrowth = savedVolGrowth;
-      state.volGrowth35 = savedVolGrowth35;
-      lerpMode.testsYoY = savedRevLerp !== undefined ? savedRevLerp : true;
-      if (savedRevPerYear) {
-        perYear.testsYoY = savedRevPerYear;
-      } else {
-        delete perYear.testsYoY;
-      }
-
-      // Now apply the decay preset for this slot's rev growth
-      applyDecayPreset(slot);
-    };
-    xhr.onerror = function () { showToast("Error loading Target Price"); };
-    xhr.send();
-  }
   var defaultScenarioSlot = "base";
   var _openSlotMenu = null; // tracks which slot dropdown is open
 
@@ -2971,11 +3299,6 @@
       // Dropdown menu
       if (isOpen) {
         html += '<div class="sbar-menu" data-slot="' + slot + '" style="border-color:' + colors.border + ';">';
-        var decayInfo = DECAY_PRESETS[slot];
-        if (decayInfo) {
-          html += '<button class="sbar-menu-item sbar-menu-decay" data-slot="' + slot + '">Quick setup <span class="sbar-decay-tag">' + decayInfo.label + '</span></button>';
-          html += '<button class="sbar-menu-item sbar-menu-copybase" data-slot="' + slot + '">Copy Target + decay <span class="sbar-decay-tag">' + decayInfo.label + '</span></button>';
-        }
         html += '<button class="sbar-menu-item sbar-menu-save" data-slot="' + slot + '">Save here</button>';
         html += '<button class="sbar-menu-item sbar-menu-default" data-slot="' + slot + '">Set as default</button>';
         html += '</div>';
@@ -3061,27 +3384,6 @@
       });
     }
 
-    // --- BIND: "Quick setup" (decay preset) ---
-    var decayBtns = container.querySelectorAll('.sbar-menu-decay');
-    for (var dc = 0; dc < decayBtns.length; dc++) {
-      decayBtns[dc].addEventListener('click', function (e) {
-        e.stopPropagation();
-        var slot = this.getAttribute('data-slot');
-        _openSlotMenu = null;
-        applyDecayPreset(slot);
-      });
-    }
-
-    // --- BIND: "Copy Base + decay" ---
-    var copyBaseBtns = container.querySelectorAll('.sbar-menu-copybase');
-    for (var cb = 0; cb < copyBaseBtns.length; cb++) {
-      copyBaseBtns[cb].addEventListener('click', function (e) {
-        e.stopPropagation();
-        var slot = this.getAttribute('data-slot');
-        _openSlotMenu = null;
-        copyBaseKeepRevGrowth(slot);
-      });
-    }
   }
 
   // Close dropdown when tapping elsewhere
@@ -3240,24 +3542,6 @@
     html += '</div>';
     html += '</div>';
 
-    // Decay Start Year
-    var decayYr = settings.decayStartYear;
-    html += '<div class="set-section">';
-    html += '<div class="set-row">';
-    html += '<div class="set-row-info">';
-    html += '<span class="set-label">Decay Start Year</span>';
-    html += '<span class="set-desc">Year from which auto-decay begins. Earlier years keep their manual values.</span>';
-    html += '</div>';
-    html += '<div class="set-toggle-group" id="decayStartYearToggle">';
-    for (var di = 1; di <= 5; di++) {
-      var dLbl = YEARS[di].replace("FY", "'").replace("E", "");
-      var dActive = di === decayYr ? ' active' : '';
-      html += '<button class="set-toggle-btn' + dActive + '" data-decay-yr="' + di + '">' + dLbl + '</button>';
-    }
-    html += '</div>';
-    html += '</div>';
-    html += '</div>';
-
     // P/E Convergence Settings
     html += '<div class="set-section">';
     html += '<div class="set-row">';
@@ -3306,44 +3590,7 @@
     html += '</div>';
     html += '</div>';
 
-    // Revenue Driver Mode (only show if config has revenueBuildup data)
-    if (CFG.revenueBuildup) {
-      html += '<div class="set-section">';
-      html += '<div class="set-row">';
-      html += '<div class="set-row-info">';
-      html += '<span class="set-label">Revenue Driver</span>';
-      html += '<span class="set-desc">Growth Rate Decay uses the main model\'s interpolated growth. Detailed Buildup uses segment-level assumptions from the Revenue tab.</span>';
-      html += '</div>';
-      var rdMode = settings.revenueDriverMode || "decay";
-      html += '<div class="set-toggle-group" id="revDriverModeToggle">';
-      var rdOpts = [{key:"decay",lbl:"Decay"},{key:"buildup",lbl:"Buildup"}];
-      for (var rdi = 0; rdi < rdOpts.length; rdi++) {
-        var rdActive = rdOpts[rdi].key === rdMode ? ' active' : '';
-        html += '<button class="set-toggle-btn' + rdActive + '" data-rev-driver="' + rdOpts[rdi].key + '">' + rdOpts[rdi].lbl + '</button>';
-      }
-      html += '</div>';
-      html += '</div>';
-      html += '</div>';
-    }
-
     container.innerHTML = html;
-
-    // Bind Revenue Driver Mode toggles
-    var revDriverBtns = container.querySelectorAll("[data-rev-driver]");
-    for (var rbi = 0; rbi < revDriverBtns.length; rbi++) {
-      revDriverBtns[rbi].addEventListener("click", function () {
-        var mode = this.getAttribute("data-rev-driver");
-        settings.revenueDriverMode = mode;
-        var all = container.querySelectorAll("[data-rev-driver]");
-        for (var j = 0; j < all.length; j++) all[j].classList.remove("active");
-        this.classList.add("active");
-        updateUI();
-        // Also notify the Revenue tab to refresh if it has a render function
-        if (window._revTabRefresh) window._revTabRefresh();
-        var modeLabels = { decay: "Growth Rate Decay", buildup: "Detailed Revenue Buildup" };
-        showToast("Revenue: " + (modeLabels[mode] || mode));
-      });
-    }
 
     // Bind DCF base year toggles
     var baseYrBtns = container.querySelectorAll("[data-base-yr]");
@@ -3419,19 +3666,6 @@
             refreshBtn.disabled = false;
             showToast("Could not refresh price");
           });
-      });
-    }
-
-    // Bind decay start year toggles
-    var decayYrBtns = container.querySelectorAll("[data-decay-yr]");
-    for (var dbi = 0; dbi < decayYrBtns.length; dbi++) {
-      decayYrBtns[dbi].addEventListener("click", function () {
-        var yr = parseInt(this.getAttribute("data-decay-yr"), 10);
-        settings.decayStartYear = yr;
-        var all = container.querySelectorAll("[data-decay-yr]");
-        for (var j = 0; j < all.length; j++) all[j].classList.remove("active");
-        this.classList.add("active");
-        showToast("Decay starts from " + YEARS[yr]);
       });
     }
 
@@ -3607,6 +3841,14 @@
             lerpMode[mk] = EDITABLE_METRICS[mk].lerpDefault;
           }
         }
+        // Reset buildup lerp modes to defaults
+        if (BUILDUP_EDITABLE) {
+          for (var bmkR in BUILDUP_EDITABLE) {
+            if (BUILDUP_EDITABLE.hasOwnProperty(bmkR) && BUILDUP_EDITABLE[bmkR].lerp) {
+              lerpMode[bmkR] = BUILDUP_EDITABLE[bmkR].lerpDefault;
+            }
+          }
+        }
         perYear = {};
         // Re-initialize metrics that default to manual mode
         for (var mk2 in EDITABLE_METRICS) {
@@ -3614,6 +3856,9 @@
             initPerYearFromLerp(mk2);
           }
         }
+        // Re-apply interpolation to lerp-enabled buildup rows
+        recomputeBuildupLerps();
+        if (window._revTabRefresh) window._revTabRefresh();
 
         var ppEl = document.getElementById("pricingPowerToggle");
         if (ppEl) ppEl.checked = defaults.hasPricingPower;
@@ -3666,6 +3911,12 @@
     if (resetBtn) {
       resetBtn.addEventListener("click", function () {
         if (!activeEditor) return;
+        if (activeEditor.isBuildupEdit) {
+          var bcR = activeEditor.buildupConfig;
+          var defVal = CFG.revenueBuildup.projections[activeEditor.projIdx][bcR.editKey];
+          applyEditorValue(defVal);
+          return;
+        }
         if (activeEditor.isPerYear) {
           // Reset this year to its lerp-computed value
           var metric = activeEditor.metric;
@@ -3682,6 +3933,25 @@
     }
   }
 
+  // ========== LONG-TERM MODELING NOTES ==========
+  function renderModelingNotes() {
+    var container = document.getElementById("modelingNotes");
+    if (!container || !CFG.modelingNotes) return;
+    var mn = CFG.modelingNotes;
+    var html = '<div class="modeling-notes-updated">Last Updated: ' + mn.lastUpdated + '</div>';
+    for (var i = 0; i < mn.sections.length; i++) {
+      var sec = mn.sections[i];
+      html += '<div class="modeling-notes-category">';
+      html += '<h4 class="modeling-notes-category-title">' + sec.title + '</h4>';
+      html += '<ul class="modeling-notes-list">';
+      for (var j = 0; j < sec.notes.length; j++) {
+        html += '<li>' + sec.notes[j] + '</li>';
+      }
+      html += '</ul></div>';
+    }
+    container.innerHTML = html;
+  }
+
   // ========== INIT ==========
   function init() {
     setText("headerTicker", CFG.ticker);
@@ -3692,6 +3962,11 @@
     if (lerpMode.testsYoY === false) {
       initPerYearFromLerp("testsYoY");
     }
+
+    // Apply linear interpolation to lerp-enabled buildup rows so intermediate
+    // years default to interpolated values between FY26 and FY35 endpoints.
+    recomputeBuildupLerps();
+    if (window._revTabRefresh) window._revTabRefresh();
 
     bindThemeToggle();
     bindTabs();
@@ -3705,6 +3980,7 @@
     bindRefreshButton();
     bindSaveLoad();
     refreshScenarioList();
+    renderModelingNotes();
     updateUI();
 
     // Load default scenario if one was set
@@ -3716,23 +3992,48 @@
     // Expose hooks for custom tabs (e.g., Revenue Buildup) to trigger model re-run
     window._coreUpdateUI = updateUI;
     window._coreSettings = settings;
+    // Expose buildup lerp helpers so the Revenue tab can honor lerp mode after edits.
+    window._coreBuildupLerpMode = lerpMode;
+    window._coreBuildupEditable = BUILDUP_EDITABLE;
+    window._coreApplyBuildupLerp = applyBuildupLerp;
   }
 
   // ========== SAVE / LOAD ASSUMPTIONS ==========
-  function saveAssumptions() {
-    var now = new Date();
-    var pad = function(n) { return n < 10 ? "0" + n : "" + n; };
-    var datePart = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
-    var timePart = pad(now.getHours()) + pad(now.getMinutes());
-    var filename = "RKLB_assumptions_" + datePart + "_" + timePart + ".json";
+  function pad2(n) { return n < 10 ? "0" + n : "" + n; }
 
+  function formatDateTime(date) {
+    var months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    return months[date.getMonth()] + " " + date.getDate() + ", " + date.getFullYear() +
+      " " + pad2(date.getHours()) + ":" + pad2(date.getMinutes());
+  }
+
+  function timeAgo(date) {
+    var seconds = Math.floor((new Date() - date) / 1000);
+    if (seconds < 60) return "just now";
+    var minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return minutes + "m ago";
+    var hours = Math.floor(minutes / 60);
+    if (hours < 24) return hours + "h ago";
+    var days = Math.floor(hours / 24);
+    if (days < 30) return days + "d ago";
+    return Math.floor(days / 30) + "mo ago";
+  }
+
+  function saveAssumptions() {
     var payload = {
       _ticker: CFG.ticker,
-      _savedAt: now.toISOString(),
       _version: 1,
       state: {},
       lerpMode: {},
-      perYear: {}
+      perYear: {},
+      // RKLB-specific: persist Space Systems driver mode + overrides + ASP CAGRs
+      ssDriverMode: settings.ssDriverMode || "yoy",
+      ssPctOverrides: settings.ssPctOverrides ? settings.ssPctOverrides.slice() : null,
+      electronAspCagr: settings.electronAspCagr || 0,
+      neutronAspCagr: settings.neutronAspCagr || 0,
+      revBuildupProjState: window._revBuildupProjState
+        ? JSON.parse(JSON.stringify(window._revBuildupProjState))
+        : null
     };
 
     var k;
@@ -3746,83 +4047,152 @@
       if (perYear.hasOwnProperty(k)) payload.perYear[k] = perYear[k].slice();
     }
 
-    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(function() { URL.revokeObjectURL(url); }, 10000);
-    showToast("Saved: " + filename);
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", "/api/assumptions/" + CFG.ticker.toLowerCase(), true);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.onload = function () {
+      if (xhr.status === 200) {
+        var resp = JSON.parse(xhr.responseText);
+        showToast("Assumptions saved (" + resp.id + ")");
+      } else {
+        showToast("Error saving assumptions");
+      }
+    };
+    xhr.onerror = function () { showToast("Error saving assumptions"); };
+    xhr.send(JSON.stringify(payload));
   }
 
-  function loadAssumptions(file) {
-    var reader = new FileReader();
-    reader.onload = function(e) {
-      var data;
-      try {
-        data = JSON.parse(e.target.result);
-      } catch (err) {
-        showToast("Error: invalid JSON file");
-        return;
+  function applyAssumptionsData(data) {
+    if (data._ticker && data._ticker !== CFG.ticker) {
+      showToast("Wrong ticker: file is for " + data._ticker + ", this is " + CFG.ticker);
+      return false;
+    }
+    if (data.state) {
+      for (var k in data.state) {
+        if (data.state.hasOwnProperty(k)) state[k] = data.state[k];
       }
-
-      if (data._version !== 1) {
-        showToast("Error: unsupported file version");
-        return;
+    }
+    if (data.lerpMode) {
+      for (var lk in data.lerpMode) {
+        if (data.lerpMode.hasOwnProperty(lk)) lerpMode[lk] = data.lerpMode[lk];
       }
-
-      if (data._ticker && data._ticker !== CFG.ticker) {
-        showToast("Wrong ticker: file is for " + data._ticker + ", this is " + CFG.ticker);
-        return;
+    }
+    if (data.perYear) {
+      perYear = {};
+      for (var pk in data.perYear) {
+        if (data.perYear.hasOwnProperty(pk)) perYear[pk] = data.perYear[pk];
       }
-
-      // Restore state
-      if (data.state) {
-        for (var k in data.state) {
-          if (data.state.hasOwnProperty(k)) state[k] = data.state[k];
+    }
+    // RKLB-specific: restore SS driver mode, overrides, ASP CAGRs, projState
+    if (data.ssDriverMode !== undefined) settings.ssDriverMode = data.ssDriverMode;
+    if (data.ssPctOverrides !== undefined) {
+      settings.ssPctOverrides = data.ssPctOverrides ? data.ssPctOverrides.slice() : null;
+    }
+    if (data.electronAspCagr !== undefined) settings.electronAspCagr = data.electronAspCagr;
+    if (data.neutronAspCagr !== undefined) settings.neutronAspCagr = data.neutronAspCagr;
+    if (data.revBuildupProjState && window._revBuildupProjState) {
+      var savedPS = data.revBuildupProjState;
+      for (var bi = 0; bi < window._revBuildupProjState.length && bi < savedPS.length; bi++) {
+        for (var bk in savedPS[bi]) {
+          if (savedPS[bi].hasOwnProperty(bk)) {
+            window._revBuildupProjState[bi][bk] = savedPS[bi][bk];
+          }
         }
       }
+      if (window._revTabRefresh) window._revTabRefresh();
+    }
+    updateUI();
+    return true;
+  }
 
-      // Restore lerpMode
-      if (data.lerpMode) {
-        for (var lk in data.lerpMode) {
-          if (data.lerpMode.hasOwnProperty(lk)) lerpMode[lk] = data.lerpMode[lk];
-        }
+  function loadAssumptions() {
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", "/api/assumptions/" + CFG.ticker.toLowerCase(), true);
+    xhr.onload = function () {
+      if (xhr.status === 200) {
+        var versions = JSON.parse(xhr.responseText);
+        if (!versions.length) { showToast("No saved assumptions found"); return; }
+        showVersionHistoryModal(versions);
+      } else {
+        showToast("Error loading assumptions list");
       }
-
-      // Restore perYear
-      if (data.perYear) {
-        perYear = {};
-        for (var pk in data.perYear) {
-          if (data.perYear.hasOwnProperty(pk)) perYear[pk] = data.perYear[pk];
-        }
-      }
-
-      updateUI();
-      showToast("Loaded: " + file.name);
     };
-    reader.readAsText(file);
+    xhr.onerror = function () { showToast("Error loading assumptions list"); };
+    xhr.send();
+  }
+
+  function showVersionHistoryModal(versions) {
+    var existing = document.getElementById("versionHistoryModal");
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+    var overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.id = "versionHistoryModal";
+
+    var modal = document.createElement("div");
+    modal.className = "modal-content version-history-modal";
+
+    var html = '<div class="modal-header">';
+    html += '<h3>Assumptions History</h3>';
+    html += '<button class="modal-close" id="closeVersionHistory">&times;</button>';
+    html += '</div>';
+    html += '<div class="version-list">';
+    for (var i = 0; i < versions.length; i++) {
+      var v = versions[i];
+      var date = v.savedAt ? new Date(v.savedAt) : null;
+      var dateStr = date ? formatDateTime(date) : v.id;
+      var relativeStr = date ? timeAgo(date) : "";
+      html += '<div class="version-item" data-version-id="' + v.id + '">';
+      html += '<div class="version-date">' + dateStr + '</div>';
+      html += '<div class="version-ago">' + relativeStr + '</div>';
+      html += '</div>';
+    }
+    html += '</div>';
+    modal.innerHTML = html;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    document.getElementById("closeVersionHistory").addEventListener("click", function () {
+      if (overlay.parentNode) document.body.removeChild(overlay);
+    });
+    overlay.addEventListener("click", function (e) {
+      if (e.target === overlay && overlay.parentNode) document.body.removeChild(overlay);
+    });
+
+    var items = modal.querySelectorAll(".version-item");
+    for (var j = 0; j < items.length; j++) {
+      items[j].addEventListener("click", function () {
+        var versionId = this.getAttribute("data-version-id");
+        loadAssumptionVersion(versionId, overlay);
+      });
+    }
+  }
+
+  function loadAssumptionVersion(versionId, overlayEl) {
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", "/api/assumptions/" + CFG.ticker.toLowerCase() + "/" + versionId, true);
+    xhr.onload = function () {
+      if (xhr.status === 200) {
+        var data = JSON.parse(xhr.responseText);
+        if (applyAssumptionsData(data)) {
+          showToast("Loaded: " + versionId);
+        }
+        if (overlayEl && overlayEl.parentNode) {
+          document.body.removeChild(overlayEl);
+        }
+      } else {
+        showToast("Error loading version");
+      }
+    };
+    xhr.onerror = function () { showToast("Error loading version"); };
+    xhr.send();
   }
 
   function bindSaveLoad() {
     var saveBtn = document.getElementById("saveAssumptionsBtn");
     var loadBtn = document.getElementById("loadAssumptionsBtn");
-    var fileInput = document.getElementById("loadAssumptionsInput");
-
-    if (saveBtn) {
-      saveBtn.addEventListener("click", saveAssumptions);
-    }
-    if (loadBtn && fileInput) {
-      loadBtn.addEventListener("click", function() { fileInput.value = ""; fileInput.click(); });
-      fileInput.addEventListener("change", function() {
-        if (fileInput.files && fileInput.files[0]) {
-          loadAssumptions(fileInput.files[0]);
-        }
-      });
-    }
+    if (saveBtn) saveBtn.addEventListener("click", saveAssumptions);
+    if (loadBtn) loadBtn.addEventListener("click", loadAssumptions);
   }
 
   if (document.readyState === "loading") {
