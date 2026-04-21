@@ -685,6 +685,8 @@ a, button, input, textarea, select {
 .fin-table .row-highlight td { font-weight: 600; }
 .fin-table .col-focus { font-weight: 600; }
 .fin-table .col-actual { color: var(--color-text-faint); }
+.fin-table .col-historical { color: var(--color-text-faint); opacity: 0.72; background: rgba(255,255,255,0.015); font-style: italic; }
+
 .fin-table .val-positive { color: var(--color-positive); }
 .fin-table .val-negative { color: var(--color-negative); }
 .fin-table .row-separator td { border-bottom: 2px solid var(--color-border); }
@@ -708,6 +710,12 @@ a, button, input, textarea, select {
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
+
+/* Revenue buildup segment rows (RKLB) */
+.fin-table .row-segment td { font-weight: 500; }
+.fin-table .row-segment-sub td { color: var(--color-text-faint); }
+.fin-table .row-segment-sub td:first-child { padding-left: var(--space-4); }
+.fin-table .row-buildup-total td { font-weight: 600; border-top: 1px solid var(--color-border); }
 
 /* ===== DCF INLINE (Financial tab) ===== */
 .dcf-inline-summary {
@@ -897,19 +905,46 @@ a, button, input, textarea, select {
   font-size: var(--text-xs);
 }
 
-/* ===== CATALYSTS ===== */
-.catalyst-list { list-style: none; padding: 0; }
-
-.catalyst-list li {
-  padding: var(--space-3) 0;
+/* ===== LONG-TERM MODELING NOTES ===== */
+.modeling-notes-updated {
+  font-size: var(--text-xs);
+  color: var(--color-muted);
+  margin-bottom: var(--space-4);
+  font-style: italic;
+}
+.modeling-notes-category {
+  margin-bottom: var(--space-4);
+}
+.modeling-notes-category:last-child {
+  margin-bottom: 0;
+}
+.modeling-notes-category-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-primary);
+  margin: 0 0 var(--space-2) 0;
+  padding-bottom: var(--space-1);
   border-bottom: 1px solid var(--color-divider);
+}
+.modeling-notes-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.modeling-notes-list li {
+  padding: var(--space-1) 0;
+  padding-left: var(--space-3);
+  position: relative;
   font-size: var(--text-sm);
   color: var(--color-text);
   line-height: 1.5;
 }
-
-.catalyst-list li:last-child { border-bottom: none; }
-.catalyst-list strong { color: var(--color-primary); }
+.modeling-notes-list li::before {
+  content: "\2022";
+  position: absolute;
+  left: 0;
+  color: var(--color-muted);
+}
 
 /* ===== FOOTER ===== */
 .app-footer {
@@ -2522,4 +2557,100 @@ thead .sum-sep-col { border-bottom: none !important; }
   .set-title { font-size: 20px; }
   .set-label { font-size: 14px; }
   .set-desc { font-size: 12px; }
+}
+
+/* ===== Assumptions Version History Modal ===== */
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.7);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.version-history-modal {
+  background: #1a1a2e;
+  border: 1px solid #333;
+  border-radius: 12px;
+  width: 400px;
+  max-width: calc(100vw - 32px);
+  max-height: 500px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+.version-history-modal .modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #333;
+}
+
+.version-history-modal .modal-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #e0e0e0;
+  font-weight: 600;
+}
+
+.version-history-modal .modal-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.version-history-modal .modal-close:hover { color: #e0e0e0; }
+
+.version-history-modal .version-list {
+  overflow-y: auto;
+  max-height: 400px;
+  padding: 8px 0;
+}
+
+.version-history-modal .version-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  cursor: pointer;
+  border-bottom: 1px solid #222;
+  transition: background 0.15s;
+}
+
+.version-history-modal .version-item:last-child { border-bottom: none; }
+.version-history-modal .version-item:hover { background: #252545; }
+
+.version-history-modal .version-date {
+  color: #e0e0e0;
+  font-size: 14px;
+}
+
+.version-history-modal .version-ago {
+  color: #888;
+  font-size: 12px;
+}
+
+/* ===== BACK LINK ===== */
+.back-link {
+  display: inline-block;
+  padding: 8px 12px;
+  margin: 4px 0 0 8px;
+  font-family: var(--font-body, 'Inter', sans-serif);
+  font-size: 13px;
+  color: #888;
+  text-decoration: none;
+  transition: color 150ms ease;
+}
+.back-link:hover {
+  color: #ccc;
+  text-decoration: underline;
 }

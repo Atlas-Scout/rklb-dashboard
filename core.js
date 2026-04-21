@@ -1772,7 +1772,56 @@
     var thead = table.querySelector("thead");
     var tbody = table.querySelector("tbody");
 
+    // ===== HISTORICAL ACTUALS DISPLAY LAYER (display-only; does NOT affect model) =====
+    var HIST = [];
+    if (CFG.historicalActuals && CFG.historicalActuals.length > 0) {
+      for (var h = 0; h < CFG.historicalActuals.length; h++) {
+        var ha = CFG.historicalActuals[h];
+        var hrev = ha.revenue || 0;
+        var hr = { year: ha.year, data: {} };
+        hr.data.revenue = hrev;
+        hr.data.cogs = (ha.cogs != null) ? ha.cogs : null;
+        hr.data.grossProfit = (ha.grossProfit != null) ? ha.grossProfit : (hrev - (ha.cogs || 0));
+        hr.data.grossMargin = (ha.grossMargin != null) ? ha.grossMargin : (hrev ? hr.data.grossProfit / hrev : null);
+        var hCashRd = (ha.cashRd != null) ? ha.cashRd : ha.rd;
+        var hCashSga = (ha.cashSga != null) ? ha.cashSga : ha.sga;
+        var hSbc = (ha.sbc != null) ? ha.sbc : 0;
+        var hOther = (ha.otherNonCash != null) ? ha.otherNonCash : 0;
+        hr.data.rd = hCashRd;
+        hr.data.rdPct = (hrev && hCashRd != null) ? hCashRd / hrev : null;
+        hr.data.sga = hCashSga;
+        hr.data.sgaPct = (hrev && hCashSga != null) ? hCashSga / hrev : null;
+        hr.data.sbc = hSbc;
+        hr.data.sbcPct = hrev ? hSbc / hrev : null;
+        hr.data.otherNonCash = hOther;
+        hr.data.otherNonCashPct = hrev ? hOther / hrev : null;
+        hr.data.totalOpEx = (hCashRd || 0) + (hCashSga || 0) + hSbc + hOther;
+        hr.data.opexPct = hrev ? hr.data.totalOpEx / hrev : null;
+        hr.data.opIncome = (ha.opIncome != null) ? ha.opIncome : null;
+        hr.data.opMargin = (hrev && ha.opIncome != null) ? ha.opIncome / hrev : null;
+        hr.data.netIncome = (ha.netIncome != null) ? ha.netIncome : null;
+        hr.data.netMargin = (hrev && ha.netIncome != null) ? ha.netIncome / hrev : null;
+        hr.data.eps = (ha.eps != null) ? ha.eps : null;
+        hr.data.shares = (ha.shares != null) ? ha.shares : null;
+        hr.data.da = (ha.da != null) ? ha.da : null;
+        hr.data.daPct = (hrev && ha.da != null) ? ha.da / hrev : null;
+        hr.data.capex = (ha.capex != null) ? ha.capex : null;
+        hr.data.capexPct = (hrev && ha.capex != null) ? Math.abs(ha.capex) / hrev : null;
+        HIST.push(hr);
+      }
+      // Compute revYoY chain across historicals (display-only)
+      for (var hh = 1; hh < HIST.length; hh++) {
+        var prevRev = HIST[hh - 1].data.revenue;
+        if (prevRev) HIST[hh].data.revYoY = HIST[hh].data.revenue / prevRev - 1;
+      }
+    }
+    var HIST_N = HIST.length;
+
     var headerHTML = "<tr><th></th>";
+    // Historical year headers (display-only)
+    for (var hhdr = 0; hhdr < HIST_N; hhdr++) {
+      headerHTML += "<th class=\"col-historical\">" + HIST[hhdr].year + "</th>";
+    }
     for (var i = 0; i < YEAR_COUNT; i++) {
       var cls = i === 1 ? " class=\"col-focus\"" : (i === 0 ? " class=\"col-actual\"" : "");
       headerHTML += "<th" + cls + ">" + YEARS[i] + "</th>";
@@ -1831,6 +1880,7 @@
       // Section header row
       if (row.section) {
         bodyHTML += "<tr class=\"row-section-header\"><td>" + row.label + "</td>";
+        for (var hs = 0; hs < HIST_N; hs++) { bodyHTML += "<td></td>"; }
         for (var s = 0; s < YEAR_COUNT; s++) { bodyHTML += "<td></td>"; }
         bodyHTML += "</tr>";
         continue;
@@ -1893,6 +1943,21 @@
       }
 
       bodyHTML += "<tr class=\"" + row.cls + "\">" + labelHTML;
+
+      // Historical cells (display-only, never editable)
+      for (var hj = 0; hj < HIST_N; hj++) {
+        var hval = HIST[hj].data[row.key];
+        var hCls = "col-historical";
+        if (row.format === "pct" && hval !== null && hval !== undefined) {
+          if (hval > 0) hCls += " val-positive";
+          else if (hval < 0) hCls += " val-negative";
+        }
+        if ((row.key === "opIncome" || row.key === "netIncome" || row.key === "ufcf" || row.key === "fcfPreSBC") && hval !== null && hval !== undefined) {
+          if (hval > 0) hCls += " val-positive";
+          else if (hval < 0) hCls += " val-negative";
+        }
+        bodyHTML += "<td class=\"" + hCls + "\">" + fmtCell(hval, row.format) + "</td>";
+      }
 
       for (var j = 0; j < YEAR_COUNT; j++) {
         var val = data[row.key][j];

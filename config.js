@@ -40,6 +40,13 @@ window.TICKER_CONFIG = {
     asp: 1
   },
 
+  // ========== HISTORICAL ACTUALS (display-only; does NOT feed the model) ==========
+  historicalActuals: [
+    { year: "FY23A", revenue: 244592, cogs: 193183, grossProfit: 51409, grossMargin: 0.2102, rd: 119054, sga: 110273, cashRd: 97333, cashSga: 91054, opIncome: -177918, netIncome: -182571, shares: 481768, eps: -0.38, da: 29744, sbc: 53461, capex: -54707, otherNonCash: 0 },
+    { year: "FY24A", revenue: 436214, cogs: 320065, grossProfit: 116149, grossMargin: 0.2663, rd: 174394, sga: 131556, cashRd: 158768, cashSga: 107023, opIncome: -189801, netIncome: -190175, shares: 495930, eps: -0.38, da: 33655, sbc: 56816, capex: -67093, otherNonCash: 0 }
+  ],
+
+  
   // ========== REVENUE DRIVER ==========
   // RKLB uses revenue-direct model (not volume x ASP)
   // "tests" = total revenue in $K, asp = 1, ASP rows hidden
